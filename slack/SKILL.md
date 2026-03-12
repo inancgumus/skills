@@ -3,8 +3,6 @@ name: slack
 description: >
   Read, navigate, search, and send messages in Slack via the local desktop app.
   Use when the user mentions Slack, a *.slack.com URL, or a channel name.
-  Provides scripts for checking unreads, searching messages, sending replies,
-  adding emoji reactions, and viewing saved-for-later items.
 compatibility: Requires agent-browser CLI and Slack desktop app running with --remote-debugging-port=9222
 metadata:
   author: inancgumus
