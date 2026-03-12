@@ -10,69 +10,11 @@ metadata:
 
 # Slack Desktop App Control
 
-Connect to the running Slack desktop app via `agent-browser --cdp 9222`.
+Connects to the running Slack desktop app via `agent-browser --cdp 9222`. The workspace is auto-detected — no configuration needed.
 
-**Every command must include `--cdp 9222`** — without it, agent-browser launches its own browser.
-
-The only way to access Slack is through `agent-browser --cdp 9222` connecting to the desktop app.
-
-## Read messages
-
-Snapshots only show interactive elements, not message text. Use eval to extract text:
-
-```bash
-agent-browser --cdp 9222 eval --stdin <<'EVALEOF'
-(() => {
-    const panel = document.querySelector('.p-flexpane') ||
-                  document.querySelector('[data-qa="message_pane"]') ||
-                  document.querySelector('.c-virtual_list__scroll_container');
-    return panel ? panel.innerText : 'No message content found';
-})()
-EVALEOF
-```
-
-`.p-flexpane` is the thread side-panel. The other selectors are the main channel view.
-
-## Interact
-
-```bash
-agent-browser --cdp 9222 snapshot -i          # see refs (@e1, @e2, ...)
-agent-browser --cdp 9222 click @eN            # click (thread, channel, button)
-sleep 1 && agent-browser --cdp 9222 snapshot -i  # always re-snapshot after clicks
-```
-
-## Search
-
-```bash
-agent-browser --cdp 9222 click @eN            # click Search button
-agent-browser --cdp 9222 fill @eN "query" && agent-browser --cdp 9222 press Enter
-sleep 2 && agent-browser --cdp 9222 snapshot -i
-```
-
-## Send a message
-
-**Always confirm with the user before sending.**
-
-```bash
-agent-browser --cdp 9222 fill @eN "message text"
-# Show the user what will be sent and wait for confirmation
-agent-browser --cdp 9222 press Enter          # only after user approves
-```
-
-## Scroll
-
-```bash
-agent-browser --cdp 9222 scroll up 500        # older messages
-agent-browser --cdp 9222 scroll down 500      # newer messages
-```
-
-## Scripts
+Use the scripts below instead of manual `agent-browser` commands. They handle navigation, state recovery, and parsing reliably.
 
 ### `scripts/unreads.py` — Fetch unread messages
-
-A standalone Python script that connects to the Slack desktop app via CDP, navigates to the Unreads view, and extracts all unread messages. No pip dependencies — only requires `agent-browser` on PATH.
-
-When the user asks to check unread Slack messages, run this script instead of doing it manually:
 
 ```bash
 python3 <skill-path>/scripts/unreads.py              # pretty-print
