@@ -31,6 +31,7 @@ import time
 from slack_cdp import (
     ab,
     ensure_clean_state,
+    ensure_slack_cdp,
     find_all_refs,
     find_ref,
     navigate_to,
@@ -135,6 +136,7 @@ def main() -> None:
 
     if not shutil.which("agent-browser"):
         sys.exit("Error: agent-browser not found on PATH.")
+    ensure_slack_cdp(args.cdp)
 
     emoji = args.emoji.strip(":")
 

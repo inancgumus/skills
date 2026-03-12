@@ -3,14 +3,14 @@ name: slack
 description: >
   Read, navigate, search, and send messages in Slack via the local desktop app.
   Use when the user mentions Slack, a *.slack.com URL, or a channel name.
-compatibility: Requires agent-browser CLI and Slack desktop app running with --remote-debugging-port=9222
+compatibility: Requires agent-browser CLI and Slack desktop app (auto-launched with CDP if needed)
 metadata:
   author: inancgumus
 ---
 
 # Slack Desktop App Control
 
-Connects to the running Slack desktop app via `agent-browser --cdp 9222`. The workspace is auto-detected — no configuration needed.
+Connects to the Slack desktop app via CDP. If Slack isn't running with CDP enabled, it's automatically (re)launched. The workspace is auto-detected — no configuration needed.
 
 Use the scripts below instead of manual `agent-browser` commands. They handle navigation, state recovery, and parsing reliably.
 

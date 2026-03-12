@@ -8,8 +8,10 @@ so fixes and improvements only need to happen in one place.
 from __future__ import annotations
 
 import json
+import platform
 import re
 import subprocess
+import sys
 import time
 
 
@@ -44,6 +46,78 @@ def ab_eval(js: str, cdp: int = 9222) -> str:
     if result.returncode != 0:
         raise RuntimeError(f"eval failed: {result.stderr.strip()}")
     return result.stdout.strip()
+
+
+# ---------------------------------------------------------------------------
+# Slack process management
+# ---------------------------------------------------------------------------
+
+def _check_cdp_connection(cdp: int) -> bool:
+    """Return True if we can reach Slack via CDP."""
+    try:
+        out = ab_eval("window.location.href", cdp=cdp)
+        return "slack" in out.lower()
+    except (RuntimeError, subprocess.TimeoutExpired):
+        return False
+
+
+def _is_slack_running() -> bool:
+    system = platform.system()
+    if system == "Darwin":
+        return subprocess.run(["pgrep", "-x", "Slack"], capture_output=True).returncode == 0
+    elif system == "Linux":
+        return subprocess.run(["pgrep", "-f", "slack"], capture_output=True).returncode == 0
+    elif system == "Windows":
+        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq slack.exe"], capture_output=True, text=True)
+        return "slack.exe" in r.stdout.lower()
+    return False
+
+
+def _launch_slack_with_cdp(cdp: int) -> str:
+    """Return the platform-specific command to (re)launch Slack with CDP enabled.
+
+    Quits Slack first only if it's already running.
+    """
+    port = str(cdp)
+    system = platform.system()
+    running = _is_slack_running()
+
+    if system == "Darwin":
+        if running:
+            return (
+                'osascript -e \'tell application "Slack" to quit\' && '
+                f"sleep 3 && open -a Slack --args --remote-debugging-port={port}"
+            )
+        return f"open -a Slack --args --remote-debugging-port={port}"
+    elif system == "Linux":
+        prefix = f"pkill slack 2>/dev/null; sleep 3; " if running else ""
+        return f"{prefix}slack --remote-debugging-port={port} &"
+    elif system == "Windows":
+        prefix = "taskkill /IM slack.exe /F 2>nul & timeout /t 3 >nul & " if running else ""
+        return f'{prefix}start "" "%LOCALAPPDATA%\\slack\\slack.exe" --remote-debugging-port={port}'
+    else:
+        return f"slack --remote-debugging-port={port} &"
+
+
+def ensure_slack_cdp(cdp: int = 9222) -> None:
+    """Ensure Slack is running with CDP. Relaunches it automatically if needed."""
+    if _check_cdp_connection(cdp):
+        return
+
+    cmd = _launch_slack_with_cdp(cdp)
+    print(json.dumps({"status": "launching_slack", "command": cmd}), file=sys.stderr)
+    subprocess.run(cmd, shell=True, capture_output=True, timeout=15)
+
+    for _ in range(15):
+        time.sleep(2)
+        if _check_cdp_connection(cdp):
+            return
+
+    print(json.dumps({
+        "error": "cannot_connect",
+        "message": f"Slack is not reachable via CDP on port {cdp}. Try manually: {cmd}",
+    }), file=sys.stderr)
+    sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

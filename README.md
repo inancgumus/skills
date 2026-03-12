@@ -21,4 +21,4 @@ npx skills add inancgumus/skills --skill slack
 ## Requirements
 
 - [agent-browser](https://github.com/anthropics/agent-browser) CLI
-- Slack desktop app running with `--remote-debugging-port=9222`
+- Slack desktop app (auto-launched with CDP if not already running)

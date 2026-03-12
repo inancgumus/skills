@@ -18,7 +18,7 @@ import shutil
 import sys
 import time
 
-from slack_cdp import ab, ab_eval, decode_ab_json, ensure_clean_state, find_ref
+from slack_cdp import ab, ab_eval, decode_ab_json, ensure_clean_state, ensure_slack_cdp, find_ref
 
 
 def parse_unreads(text: str) -> list[dict]:
@@ -110,6 +110,7 @@ def main() -> None:
 
     if not shutil.which("agent-browser"):
         sys.exit("Error: agent-browser not found on PATH.")
+    ensure_slack_cdp(args.cdp)
 
     # 1. Ensure clean state so the sidebar is visible, then find Unreads.
     snapshot = ensure_clean_state(args.cdp)

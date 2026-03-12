@@ -22,7 +22,7 @@ import shutil
 import sys
 import time
 
-from slack_cdp import ab, ab_eval, decode_ab_json, find_ref
+from slack_cdp import ab, ab_eval, decode_ab_json, ensure_slack_cdp, find_ref
 
 
 def parse_later_items(text: str, limit: int) -> list[dict]:
@@ -110,6 +110,7 @@ def main() -> None:
 
     if not shutil.which("agent-browser"):
         sys.exit("Error: agent-browser not found on PATH.")
+    ensure_slack_cdp(args.cdp)
 
     # 1. Click the Later tab (always visible in top tab bar)
     snapshot = ab("snapshot", "-i", cdp=args.cdp)
