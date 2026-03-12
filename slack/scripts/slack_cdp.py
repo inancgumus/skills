@@ -196,7 +196,7 @@ def ensure_clean_state(cdp: int) -> str:
     Returns a fresh snapshot with the sidebar available.
     """
     snapshot = ab("snapshot", "-i", cdp=cdp)
-    if find_ref(snapshot, r'treeitem "Unreads"') or find_ref(snapshot, r'treeitem "Threads"'):
+    if find_ref(snapshot, r'button "New message"'):
         return snapshot  # sidebar already visible
 
     # Try Escape first (dismisses dialogs), then click Home tab (escapes search results)
@@ -209,34 +209,48 @@ def ensure_clean_state(cdp: int) -> str:
                 ab("click", f"@{home_ref}", cdp=cdp)
         time.sleep(1)
         snapshot = ab("snapshot", "-i", cdp=cdp)
-        if find_ref(snapshot, r'treeitem "Unreads"') or find_ref(snapshot, r'treeitem "Threads"'):
+        if find_ref(snapshot, r'button "New message"'):
             return snapshot
 
     return snapshot  # best effort
 
 
-def navigate_to(target: str, cdp: int) -> bool:
-    """Use Cmd+K (quick switcher) to navigate to a channel or DM by name."""
-    ab("press", "Meta+k", cdp=cdp)
+def search_and_select(query: str, cdp: int) -> bool:
+    """Open the Search bar, type a query, and select the first suggestion.
+
+    Works for navigating to Slack views like Unreads, Threads, etc.
+    that may not appear as the first suggestion for short names.
+    """
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+    search_ref = find_ref(snapshot, r'button "Search"')
+    if not search_ref:
+        return False
+
+    ab("click", f"@{search_ref}", cdp=cdp)
     time.sleep(1)
 
     snapshot = ab("snapshot", "-i", cdp=cdp)
-    input_ref = find_ref(snapshot, r'(combobox|textbox|input)')
+    input_ref = find_ref(snapshot, r'combobox.*Query')
     if not input_ref:
         return False
 
-    ab("fill", f"@{input_ref}", target, cdp=cdp)
+    ab("fill", f"@{input_ref}", query, cdp=cdp)
     time.sleep(1)
 
     snapshot = ab("snapshot", "-i", cdp=cdp)
-    first_option = find_ref(snapshot, r'(option|listitem)')
-    if first_option:
-        ab("click", f"@{first_option}", cdp=cdp)
+    option_ref = find_ref(snapshot, r'option')
+    if option_ref:
+        ab("click", f"@{option_ref}", cdp=cdp)
     else:
         ab("press", "Enter", cdp=cdp)
 
     time.sleep(1)
     return True
+
+
+def navigate_to(target: str, cdp: int) -> bool:
+    """Navigate to a channel, DM, or Slack view by name via the search bar."""
+    return search_and_select(target, cdp)
 
 
 def navigate_to_message(channel_id: str, message_ts: str, cdp: int) -> None:

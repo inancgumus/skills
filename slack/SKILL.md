@@ -35,7 +35,7 @@ python3 <skill-path>/scripts/search.py "query" --cdp 9333     # custom CDP port
 
 ### `scripts/reply.py` — Send a message
 
-Navigates to a channel or DM using Slack's quick switcher (Cmd+K), fills the message box, and optionally sends. Uses the "Send now" button (not Enter) for reliable delivery.
+Navigates to a channel or DM via the search bar, fills the message box, and optionally sends. Uses the "Send now" button (not Enter) for reliable delivery.
 
 **Always confirm with the user before passing `--send`.**
 

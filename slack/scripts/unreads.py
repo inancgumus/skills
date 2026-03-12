@@ -18,7 +18,7 @@ import shutil
 import sys
 import time
 
-from slack_cdp import ab, ab_eval, decode_ab_json, ensure_clean_state, ensure_slack_cdp, find_ref
+from slack_cdp import ab, ab_eval, decode_ab_json, ensure_slack_cdp, search_and_select
 
 
 def parse_unreads(text: str) -> list[dict]:
@@ -112,15 +112,10 @@ def main() -> None:
         sys.exit("Error: agent-browser not found on PATH.")
     ensure_slack_cdp(args.cdp)
 
-    # 1. Ensure clean state so the sidebar is visible, then find Unreads.
-    snapshot = ensure_clean_state(args.cdp)
-    unreads_ref = find_ref(snapshot, r'"?Unreads"?')
-    if not unreads_ref:
-        sys.exit("Error: could not find the Unreads button in Slack sidebar.")
-
-    # 2. Click Unreads
-    ab("click", f"@{unreads_ref}", cdp=args.cdp)
-    time.sleep(2)
+    # 1. Navigate to Unreads via search bar (works regardless of sidebar layout)
+    if not search_and_select("Unreads", args.cdp):
+        sys.exit("Error: could not navigate to Unreads.")
+    time.sleep(1)
 
     # 2b. --names-only: parse channel names from snapshot (fast, no JS eval needed)
     #     The unreads view shows buttons like: button "#ai-random section"
