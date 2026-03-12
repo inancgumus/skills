@@ -68,3 +68,32 @@ python3 <skill-path>/scripts/later.py --tab archived            # show archived 
 python3 <skill-path>/scripts/later.py --tab completed           # show completed items
 python3 <skill-path>/scripts/later.py --limit 10                # cap results (default: 50)
 ```
+
+## Manual commands
+
+For anything the scripts don't cover, use `agent-browser --cdp 9222` directly. Every command must include `--cdp 9222`.
+
+```bash
+agent-browser --cdp 9222 snapshot -i                              # list interactive elements (@e1, @e2, ...)
+agent-browser --cdp 9222 click @eN                                # click a button, link, or tab
+agent-browser --cdp 9222 hover @eN                                # hover to reveal toolbars
+agent-browser --cdp 9222 fill @eN "text"                          # type into an input
+agent-browser --cdp 9222 press Enter                              # press a key
+agent-browser --cdp 9222 scroll up 500                            # scroll up (older messages)
+agent-browser --cdp 9222 scroll down 500                          # scroll down (newer messages)
+```
+
+To read message text (snapshots only show interactive elements):
+
+```bash
+agent-browser --cdp 9222 eval --stdin <<'EVALEOF'
+(() => {
+    const panel = document.querySelector('.p-flexpane') ||
+                  document.querySelector('[data-qa="message_pane"]') ||
+                  document.querySelector('.c-virtual_list__scroll_container');
+    return panel ? panel.innerText : 'No message content found';
+})()
+EVALEOF
+```
+
+`.p-flexpane` is the thread side-panel. The other selectors are the main channel view.
