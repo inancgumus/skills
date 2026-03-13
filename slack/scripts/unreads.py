@@ -14,11 +14,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import shutil
 import sys
 import time
 
-from slack_cdp import ab, ab_eval, decode_ab_json, ensure_slack_cdp, search_and_select
+from slack import ab, ab_eval, decode_ab_json, ensure_slack_cdp, navigate_to
 
 
 def parse_unreads(text: str) -> list[dict]:
@@ -108,12 +107,10 @@ def main() -> None:
     # Normalize: strip leading # and lowercase for comparison
     args.channel = [ch.lstrip("#").lower() for ch in args.channel]
 
-    if not shutil.which("agent-browser"):
-        sys.exit("Error: agent-browser not found on PATH.")
     ensure_slack_cdp(args.cdp)
 
     # 1. Navigate to Unreads via search bar (works regardless of sidebar layout)
-    if not search_and_select("Unreads", args.cdp):
+    if not navigate_to("Unreads", args.cdp):
         sys.exit("Error: could not navigate to Unreads.")
     time.sleep(1)
 

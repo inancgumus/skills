@@ -12,7 +12,7 @@ metadata:
 
 Connects to the Slack desktop app via CDP. If Slack isn't running with CDP enabled, it's automatically (re)launched. The workspace is auto-detected — no configuration needed.
 
-Use the scripts below instead of manual `agent-browser` commands. They handle navigation, state recovery, and parsing reliably.
+All scripts share the same Slack desktop app, so run them sequentially from a single process. Use the scripts below instead of manual `agent-browser` commands. They handle navigation, state recovery, and parsing reliably.
 
 ### `scripts/unreads.py` — Fetch unread messages
 
@@ -37,12 +37,10 @@ python3 <skill-path>/scripts/search.py "query" --cdp 9333     # custom CDP port
 
 Navigates to a channel or DM via the search bar, fills the message box, and optionally sends. Uses the "Send now" button (not Enter) for reliable delivery.
 
-**Always confirm with the user before passing `--send`.**
-
 ```bash
-python3 <skill-path>/scripts/reply.py "Inanc Gumus" "hello"            # dry-run (fills, does not send)
-python3 <skill-path>/scripts/reply.py "#ai-random" "hey" --send        # actually send
-python3 <skill-path>/scripts/reply.py "inanctest" "test msg" --send    # channel or DM by name
+python3 <skill-path>/scripts/reply.py "Jane Smith" "hello"             # dry-run (fills, does not send)
+python3 <skill-path>/scripts/reply.py "#general" "hey" --send          # actually send
+python3 <skill-path>/scripts/reply.py "my-channel" "test msg" --send   # channel or DM by name
 ```
 
 ### `scripts/emoji.py` — React to a message
@@ -52,9 +50,9 @@ Adds an emoji reaction to a message. If the emoji is already on the message, cli
 Accepts a message ID (from search.py output) or `--last` as a shortcut for the most recent message in a channel/DM.
 
 ```bash
-python3 <skill-path>/scripts/emoji.py thumbsup C0587R32AM9/1772100390.731669   # by message ID
-python3 <skill-path>/scripts/emoji.py ":fire:" --last inanctest                 # last msg in channel
-python3 <skill-path>/scripts/emoji.py eyes --last "Inanc Gumus"                 # last msg in DM
+python3 <skill-path>/scripts/emoji.py thumbsup C0123456789/1234567890.123456    # by message ID
+python3 <skill-path>/scripts/emoji.py ":fire:" --last general                   # last msg in channel
+python3 <skill-path>/scripts/emoji.py eyes --last "Jane Smith"                  # last msg in DM
 ```
 
 ### `scripts/later.py` — Fetch "Later" (saved) items
@@ -69,9 +67,23 @@ python3 <skill-path>/scripts/later.py --tab completed           # show completed
 python3 <skill-path>/scripts/later.py --limit 10                # cap results (default: 50)
 ```
 
+## Processing multiple messages
+
+Both `emoji.py` and `reply.py` accept `CHANNEL_ID/MESSAGE_TS` to target a specific message. They navigate to the channel and scroll to the message automatically. Timestamps accept any format: `1773418516.710389`, `p1773418516710389`, or `1773418516710389`.
+
+```bash
+# Add emoji to a specific message:
+python3 <skill-path>/scripts/emoji.py thumbsup C0123456789/p1234567890123456
+
+# Reply in a message's thread:
+python3 <skill-path>/scripts/reply.py --send C0123456789/p1234567890123456 "thread reply here"
+```
+
+When processing many messages, call these scripts in a loop from bash. They handle channel navigation and scrolling internally — just feed them the message IDs.
+
 ## Manual commands
 
-For anything the scripts don't cover, use `agent-browser --cdp 9222` directly. Every command must include `--cdp 9222`.
+For anything the scripts don't cover, use `agent-browser --cdp 9222` directly. Every command must include `--cdp 9222`. Navigate within the app using DOM clicks — do not use `agent-browser open URL` as it disrupts the Electron app's state.
 
 ```bash
 agent-browser --cdp 9222 snapshot -i                              # list interactive elements (@e1, @e2, ...)
