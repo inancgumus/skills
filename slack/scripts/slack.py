@@ -7,6 +7,7 @@ so fixes and improvements only need to happen in one place.
 
 from __future__ import annotations
 
+import datetime
 import json
 import platform
 import re
@@ -221,15 +222,18 @@ def ensure_clean_state(cdp: int) -> str:
 def navigate_to(target: str, cdp: int) -> bool:
     """Navigate to a channel, DM, or Slack view by name via the search bar."""
     snapshot = ab("snapshot", "-i", cdp=cdp)
-    search_ref = find_ref(snapshot, r'button "Search"')
-    if not search_ref:
-        return False
 
-    ab("click", f"@{search_ref}", cdp=cdp)
-    time.sleep(1)
-
-    snapshot = ab("snapshot", "-i", cdp=cdp)
+    # If the search combobox is already open, use it directly
     input_ref = find_ref(snapshot, r'combobox.*Query')
+    if not input_ref:
+        # Open search — button may be "Search" or "Clear search" (when already active)
+        search_ref = find_ref(snapshot, r'button "Search"') or find_ref(snapshot, r'button "Clear')
+        if not search_ref:
+            return False
+        ab("click", f"@{search_ref}", cdp=cdp)
+        time.sleep(1)
+        snapshot = ab("snapshot", "-i", cdp=cdp)
+        input_ref = find_ref(snapshot, r'combobox.*Query')
     if not input_ref:
         return False
 
@@ -251,16 +255,90 @@ def navigate_to(target: str, cdp: int) -> bool:
 # Message ID parsing
 # ---------------------------------------------------------------------------
 
-def parse_message_id(mid: str) -> tuple[str, str]:
-    """Parse CHANNEL_ID/MESSAGE_TS into (channel_id, message_ts).
+def _resolve_channel_name(name: str, cdp: int) -> str:
+    """Look up a channel ID by name from the sidebar. Falls back to navigating to it."""
+    # Try sidebar first
+    raw = ab_eval(f"""(() => {{
+        const items = [...document.querySelectorAll('[data-qa-channel-sidebar-channel-id]')];
+        const match = items.find(el => {{
+            const n = el.querySelector('[data-qa="channel_sidebar_name"]') || el;
+            return n.textContent.trim().toLowerCase() === '{name.lower()}';
+        }});
+        return match ? JSON.stringify(match.getAttribute('data-qa-channel-sidebar-channel-id')) : 'null';
+    }})()""", cdp=cdp)
+    cid = decode_ab_json(raw)
+    if isinstance(cid, str):
+        return cid
+    # Fallback: navigate to channel so it appears in sidebar, then retry
+    navigate_to(name, cdp)
+    time.sleep(1)
+    raw = ab_eval(f"""(() => {{
+        const items = [...document.querySelectorAll('[data-qa-channel-sidebar-channel-id]')];
+        const match = items.find(el => {{
+            const n = el.querySelector('[data-qa="channel_sidebar_name"]') || el;
+            return n.textContent.trim().toLowerCase() === '{name.lower()}';
+        }});
+        return match ? JSON.stringify(match.getAttribute('data-qa-channel-sidebar-channel-id')) : 'null';
+    }})()""", cdp=cdp)
+    cid = decode_ab_json(raw)
+    return cid if isinstance(cid, str) else ""
 
-    Accepts any timestamp format: '1773418516.710389', 'p1773418516710389'.
-    Returns ('', '') if the format is invalid.
+
+def resolve_ref(ref: str, cdp: int = 9222) -> tuple[str, str]:
+    """Resolve any channel/message reference to (channel_id, message_id).
+
+    Accepted formats:
+      - Channel ID:    C042WNMBYQM                  → ("C042WNMBYQM", "")
+      - Message ref:   C042WNMBYQM/1773432901.662159 → ("C042WNMBYQM", "1773432901.662159")
+      - Slack URL:     https://…/archives/C…/p…      → parsed
+      - Channel name:  #k6-alert-core-team            → sidebar lookup → ("C042WNMBYQM", "")
+      - DM by name:    @Inanc Gumus                   → navigate + read DM channel ID from URL
+
+    Channel names MUST start with # and DMs with @ to avoid ambiguity.
+    Raises SystemExit if the reference cannot be resolved.
     """
-    parts = mid.split("/", 1)
-    if len(parts) != 2 or not parts[0].startswith("C") or len(parts[0]) < 9:
-        return ("", "")
-    return (parts[0], normalize_ts(parts[1]))
+    ref = ref.strip()
+
+    # Slack permalink URL
+    if "archives/" in ref:
+        parsed = parse_slack_url(ref)
+        cid = parsed.get("channel_id", "")
+        mid = parsed.get("message_id", "")
+        if not cid:
+            sys.exit(f"Error: could not parse channel from URL: {ref}")
+        return (cid, mid)
+
+    # DM by display name — must start with @
+    if ref.startswith("@"):
+        name = ref[1:]
+        navigate_to(name, cdp)
+        time.sleep(1)
+        url = ab_eval("window.location.href", cdp=cdp)
+        m = re.search(r'/([A-Z][A-Z0-9]{7,})', url)
+        if m:
+            return (m.group(1), "")
+        sys.exit(f"Error: could not navigate to DM with '{name}'.")
+
+    # Channel name — must start with #
+    if ref.startswith("#"):
+        name = ref[1:]
+        cid = _resolve_channel_name(name, cdp)
+        if not cid:
+            sys.exit(f"Error: channel '{ref}' not found.")
+        return (cid, "")
+
+    # Message ref: CHANNEL_ID/MESSAGE_ID
+    if "/" in ref:
+        parts = ref.split("/", 1)
+        if not parts[0].startswith("C") or len(parts[0]) < 9:
+            sys.exit(f"Error: invalid message reference: {ref}")
+        return (parts[0], normalize_ts(parts[1]))
+
+    # Bare channel ID
+    if ref.startswith("C") and len(ref) >= 9:
+        return (ref, "")
+
+    sys.exit(f"Error: '{ref}' is not a valid reference. Channel names must start with #.")
 
 
 def parse_slack_url(href: str) -> dict:
@@ -280,7 +358,7 @@ def parse_slack_url(href: str) -> dict:
     tm = re.search(r'thread_ts=([\d.]+)', href)
     if tm:
         thread_ts = tm.group(1)
-    return {"channel_id": channel_id, "message_ts": message_ts, "thread_ts": thread_ts}
+    return {"channel_id": channel_id, "message_id": message_ts, "thread_id": thread_ts}
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +401,22 @@ DOM = {
 # Channel & date navigation
 # ---------------------------------------------------------------------------
 
+
+def get_channel_name(channel_id: str, cdp: int = 9222) -> str:
+    """Get the display name of a channel from its sidebar item."""
+    raw = ab_eval(f"""(() => {{
+        const item = document.querySelector('[data-qa-channel-sidebar-channel-id="{channel_id}"]');
+        if (!item) return 'null';
+        const nameEl = item.querySelector('[data-qa="channel_sidebar_name"]') || item;
+        return JSON.stringify(nameEl.textContent.trim().split('\\n')[0].trim());
+    }})()""", cdp=cdp)
+    name = decode_ab_json(raw)
+    return name if isinstance(name, str) else ""
+
+
+#
+# ---------------------------------------------------------------------------
+
 def go_to_channel(name_or_id: str, cdp: int = 9222) -> bool:
     """Navigate to a channel by name or ID. Tries sidebar first, falls back to search.
 
@@ -360,10 +454,11 @@ def go_to_channel(name_or_id: str, cdp: int = 9222) -> bool:
     return navigate_to(name_or_id, cdp)
 
 
-def jump_to_date(year: int, month: int, day: int, cdp: int = 9222) -> None:
+def jump_to_date(year: int, month: int, day: int, cdp: int = 9222) -> bool:
     """Jump to a specific date using the calendar picker.
 
     Uses data-qa selectors for reliable calendar navigation.
+    Returns False if not in a channel view (no Jump to date button available).
     """
     date_str = f"{year}-{month:02d}-{day:02d}"
 
@@ -373,22 +468,25 @@ def jump_to_date(year: int, month: int, day: int, cdp: int = 9222) -> None:
     time.sleep(0.3)
 
     # Open date picker menu, click last item ("Jump to a specific date")
-    ab_eval(f"""(async () => {{
+    raw = ab_eval(f"""(async () => {{
         const btn = document.querySelector('{DOM["JUMP_TO_DATE"]}');
-        if (!btn) throw new Error('no jump-to-date button');
+        if (!btn) return 'no_button';
         btn.click();
         await new Promise(r => setTimeout(r, 500));
         const items = document.querySelectorAll('{DOM["MENU_ITEM"]}');
-        if (!items.length) throw new Error('no menu items');
+        if (!items.length) return 'no_menu';
         items[items.length - 1].click();
         await new Promise(r => setTimeout(r, 500));
+        return 'ok';
     }})()""", cdp=cdp)
+    if "no_button" in raw or "no_menu" in raw:
+        return False
     time.sleep(0.5)
 
     # Navigate calendar year/month, then click the day
     ab_eval(f"""(async () => {{
         const cal = document.querySelector("{DOM['CAL']}");
-        if (!cal) throw new Error('no calendar');
+        if (!cal) return;
         const readTitle = () => document.querySelector('{DOM["CAL_TITLE"]}')?.innerText || '';
         const getYear = () => Number(readTitle().split(' ').pop());
         const getMonth = () => new Date(readTitle() + ' 1').getMonth();
@@ -409,10 +507,10 @@ def jump_to_date(year: int, month: int, day: int, cdp: int = 9222) -> None:
             await new Promise(r => setTimeout(r, 100));
         }}
         const dayBtn = document.querySelector('[data-qa-date="{date_str}"]');
-        if (!dayBtn) throw new Error('day not found: {date_str}');
-        dayBtn.click();
+        if (dayBtn) dayBtn.click();
     }})()""", cdp=cdp)
     time.sleep(1.5)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -434,19 +532,35 @@ def scroll_to_message(msg_ts: str, cdp: int = 9222) -> bool:
     """Scroll a specific message into the center of the viewport.
 
     Returns True if the message was found and scrolled to.
+    Falls back to jump_to_date when navigating to a channel only loads recent
+    messages and the target is not in the current DOM.
     """
     msg_ts = normalize_ts(msg_ts)
-    raw = ab_eval(f"""(() => {{
-        const msg = [...document.querySelectorAll('{DOM["MESSAGE"]}')]
-            .find(el => el.dataset.msgTs === '{msg_ts}');
-        if (!msg) return '"not_found"';
-        msg.scrollIntoView({{block: 'center'}});
-        return '"ok"';
-    }})()""", cdp=cdp)
-    if "not_found" in raw:
+
+    def find_in_dom() -> bool:
+        raw = ab_eval(f"""(() => {{
+            const msg = [...document.querySelectorAll('{DOM["MESSAGE"]}')]
+                .find(el => el.dataset.msgTs === '{msg_ts}');
+            if (!msg) return '"not_found"';
+            msg.scrollIntoView({{block: 'center'}});
+            return '"ok"';
+        }})()""", cdp=cdp)
+        return "not_found" not in raw
+
+    if find_in_dom():
+        time.sleep(0.5)
+        return True
+
+    # Message not in current viewport — ensure we're in channel view, then jump to date
+    ensure_clean_state(cdp)
+    dt = datetime.datetime.fromtimestamp(float(msg_ts.split(".")[0]))
+    if not jump_to_date(dt.year, dt.month, dt.day, cdp):
         return False
-    time.sleep(0.5)
-    return True
+    if find_in_dom():
+        time.sleep(0.5)
+        return True
+
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -526,31 +640,30 @@ def add_emoji(msg_ts: str, emoji: str, cdp: int = 9222) -> bool:
 
 
 def open_thread(msg_ts: str, cdp: int = 9222) -> bool:
-    """Open the thread panel for a message without replying.
+    """Open the thread panel for a message.
 
-    Scrolls to the message, hovers its timestamp to reveal the toolbar,
-    and clicks "Reply in thread" / reply bar to open the thread panel.
-    Returns True if the thread panel opened successfully.
+    Scrolls to the message and clicks the "X replies" / "Reply to thread"
+    button in the reply bar via JS (same approach as go_to_channel sidebar
+    navigation). Returns True if a thread button was found and clicked.
     """
     msg_ts = normalize_ts(msg_ts)
     if not scroll_to_message(msg_ts, cdp):
         return False
 
-    snapshot = ab("snapshot", "-i", cdp=cdp)
-    ts_ref = find_ts_ref(msg_ts, snapshot, cdp)
-    if not ts_ref:
+    raw = ab_eval(f"""(() => {{
+        const msg = [...document.querySelectorAll('{DOM["MESSAGE"]}')]
+            .find(el => el.dataset.msgTs === '{msg_ts}');
+        if (!msg) return '"not_found"';
+        const btn = msg.querySelector('[data-qa="reply_bar_view_thread"]') ||
+                    msg.querySelector('[data-qa="start_thread"]');
+        if (!btn) return '"no_button"';
+        btn.click();
+        return '"clicked"';
+    }})()""", cdp=cdp)
+    result = decode_ab_json(raw)
+    if result != "clicked":
         return False
 
-    ab("hover", f"@{ts_ref}", cdp=cdp)
-    time.sleep(0.3)
-    snapshot = ab("snapshot", "-i", cdp=cdp)
-    thread_ref = find_ref_after(snapshot, ts_ref, r'(Reply in thread|Start a thread)')
-    if not thread_ref:
-        thread_ref = find_ref_after(snapshot, ts_ref, r'(repl|thread)')
-    if not thread_ref:
-        return False
-
-    ab("click", f"@{thread_ref}", cdp=cdp)
     time.sleep(1)
     return True
 
@@ -583,25 +696,151 @@ def get_thread_reply_ids(cdp: int = 9222) -> list[str]:
     return all_ts[1:]
 
 
-def read_message_content(msg_ts: str, cdp: int = 9222) -> str:
-    """Read the full text content of a message by its timestamp.
+def find_thread_parent(target_ts: str, cdp: int) -> str | None:
+    """Find the parent message ts whose thread contains target_ts.
 
-    Scrolls to the message in the channel view and extracts its text.
-    Same navigation pattern as reply_in_thread — the message must be
-    reachable via scroll_to_message (i.e. in the loaded DOM window).
-    Returns empty string if the message is not found.
+    Thread replies don't appear in the channel view DOM. We identify the parent
+    by finding the message whose reply-bar last-reply timestamp is the tightest
+    upper bound on target_ts: i.e. last_reply >= target, minimizing
+    (last_reply - target). This avoids false positives from long-running threads
+    whose last reply happens to be after the target but whose replies are all later.
+    """
+    raw = ab_eval(f"""(() => {{
+        const target = parseFloat('{target_ts}');
+        const msgs = [...document.querySelectorAll('{DOM["MESSAGE"]}')];
+        let best = null, bestGap = Infinity;
+        for (const msg of msgs) {{
+            const msgTs = parseFloat(msg.dataset.msgTs || '0');
+            if (msgTs >= target) continue;
+            const bar = msg.querySelector('[data-qa="reply_bar_last_reply"]');
+            if (!bar) continue;
+            const lastReply = parseFloat(bar.dataset.ts || '0');
+            if (lastReply >= target) {{
+                const gap = lastReply - target;
+                if (gap < bestGap) {{ bestGap = gap; best = msg.dataset.msgTs; }}
+            }}
+        }}
+        return best ? JSON.stringify(best) : 'null';
+    }})()""", cdp=cdp)
+    parent_ts = decode_ab_json(raw)
+    return parent_ts if isinstance(parent_ts, str) else None
+
+
+EXTRACT_MSG_JS = """(msgTs, sel) => {
+    const msg = [...document.querySelectorAll(sel)].find(el => el.dataset.msgTs === msgTs);
+    if (!msg) return null;
+    const userEl = msg.querySelector('[data-qa="message_sender_name"]');
+    const user = userEl ? userEl.textContent.trim() : '';
+    const dateEl = msg.querySelector('[data-qa="timestamp_label"]');
+    const dateLabel = dateEl ? dateEl.textContent.trim() : '';
+    const msgEl = msg.querySelector('[data-qa="message-text"]');
+    const message = msgEl ? msgEl.innerText.trim() : '';
+    // For each reactji in this message, find its global index among all same-emoji reactjis.
+    // This lets the caller pick the right nth match from the accessibility snapshot.
+    const allReactjis = [...document.querySelectorAll('[data-qa="reactji"]')];
+    const reactions = [...msg.querySelectorAll('[data-qa="reactji"]')].map(r => {
+        const emojiEl = r.querySelector('[data-stringify-emoji]');
+        const emoji = emojiEl ? emojiEl.getAttribute('data-stringify-emoji').replace(/:/g, '') : '';
+        const sameEmoji = allReactjis.filter(el => {
+            const e = el.querySelector('[data-stringify-emoji]');
+            return e && e.getAttribute('data-stringify-emoji').replace(/:/g, '') === emoji;
+        });
+        return {emoji, idx: sameEmoji.indexOf(r)};
+    }).filter(r => r.emoji);
+    return {user, dateLabel, message, reactions};
+}"""
+
+
+def parse_reaction_tooltip(tip_text: str, emoji: str) -> list[str]:
+    """Parse usernames from a Slack reaction tooltip.
+
+    Handles two formats:
+      - Combined: "User1, User2, and User3 reacted with :emoji:"
+      - Per-user:  "User1 reacted with :emoji:User2 reacted with :emoji::skin-tone-N:"
+        (when users reacted with emoji variants like skin tones)
+    """
+    if not tip_text:
+        return []
+    # Split on each "reacted with :...(optional skin-tone):" occurrence
+    parts = re.split(r"\s+reacted with\s+:[^:]+:(?::[^:]+:)*", tip_text)
+    parts = [p.strip() for p in parts if p.strip()]
+    names: list[str] = []
+    for part in parts:
+        # Remove leading "and " (last item in "User1, User2, and User3" list)
+        cleaned = re.sub(r"^\s*and\s+", "", part).strip()
+        for name in re.split(r",\s*(?:and\s+)?", cleaned):
+            name = name.strip()
+            if name:
+                names.append(name)
+    return names
+
+
+def read_reaction_users(reactions: list[dict], cdp: int) -> list[dict]:
+    """For each reaction, hover the correct reactji button and read the .c-reaction__tip tooltip.
+
+    Uses snapshot -i -C to find cursor-interactive reactji buttons (tabindex=-1).
+    Each reaction has {emoji, idx} where idx is the global nth-index of that emoji's button,
+    ensuring the right button is targeted even when multiple messages share the same emoji.
+    Emoji names with hyphens (e.g. christmas-parrot) match either hyphen or space in aria-labels.
+    """
+    if not reactions:
+        return []
+    snapshot = ab("snapshot", "-i", "-C", cdp=cdp)
+    results = []
+    for r in reactions:
+        emoji = r["emoji"]
+        idx = r.get("idx", 0)
+        # Slack aria-labels may use space instead of hyphen (christmas-parrot → christmas parrot)
+        pattern = rf"react with {re.escape(emoji).replace(r'\-', r'[\s\-]')} emoji"
+        refs = find_all_refs(snapshot, pattern)
+        if idx >= len(refs):
+            continue
+        ab("hover", f"@{refs[idx]}", cdp=cdp)
+        time.sleep(0.3)
+        raw = ab_eval("""(() => {
+            const tip = document.querySelector('[class*="c-reaction__tip"]');
+            return tip ? JSON.stringify(tip.textContent.trim()) : 'null';
+        })()""", cdp=cdp)
+        tip_text = decode_ab_json(raw)
+        if not isinstance(tip_text, str):
+            continue
+        for name in parse_reaction_tooltip(tip_text, emoji):
+            results.append({"user": name, "emoji": emoji})
+    return results
+
+
+def extract_msg(msg_ts: str, cdp: int) -> dict | None:
+    """Extract structured message data from the current DOM."""
+    raw = ab_eval(
+        f"({EXTRACT_MSG_JS})('{msg_ts}', '{DOM['MESSAGE']}')",
+        cdp=cdp,
+    )
+    data = decode_ab_json(raw)
+    if not isinstance(data, dict):
+        return None
+    data["reactions"] = read_reaction_users(data.get("reactions", []), cdp)
+    return data
+
+
+def read_message_content(msg_ts: str, cdp: int = 9222) -> dict | None:
+    """Read structured message data (author, date, text, reactions) by timestamp.
+
+    Tries the channel view first (with a jump-to-date fallback for old messages).
+    If still not found, assumes it's a thread reply and opens the parent thread.
+    Returns None if the message cannot be located.
     """
     msg_ts = normalize_ts(msg_ts)
-    if not scroll_to_message(msg_ts, cdp):
-        return ""
-    raw = ab_eval(f"""(() => {{
-        const msg = [...document.querySelectorAll('{DOM["MESSAGE"]}')]
-            .find(el => el.dataset.msgTs === '{msg_ts}');
-        if (!msg) return '""';
-        return JSON.stringify(msg.innerText.trim());
-    }})()""", cdp=cdp)
-    text = decode_ab_json(raw)
-    return text if isinstance(text, str) else ""
+
+    if scroll_to_message(msg_ts, cdp):
+        return extract_msg(msg_ts, cdp)
+
+    # Not in channel view — may be a thread reply
+    parent_ts = find_thread_parent(msg_ts, cdp)
+    if not parent_ts or not open_thread(parent_ts, cdp):
+        return None
+    data = extract_msg(msg_ts, cdp)
+    close_thread(cdp)
+    return data
 
 
 def read_thread_messages(cdp: int = 9222) -> dict[str, str]:
