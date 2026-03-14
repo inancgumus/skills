@@ -5,10 +5,20 @@ Requires:
   - Slack desktop app running with --remote-debugging-port=9222
   - agent-browser CLI on PATH
 
+Slack search syntax:
+  in:#channel       search within a channel
+  from:@user        messages from a user
+  after:YYYY-MM-DD  messages after a date
+  before:YYYY-MM-DD messages before a date
+  has:reaction      messages with any reaction
+  has:file          messages with attachments
+
 Usage:
-  python search.py "query"
-  python search.py "query" --json
-  python search.py "query" --limit 5
+  python search.py "deployment failed"
+  python search.py "in:#ops-alerts deployment failed"
+  python search.py "from:@alice has:file after:2024-01-01"
+  python search.py "standup in:#general before:2024-06-01" --limit 5
+  python search.py "error has:reaction" --json
   python search.py "query" --cdp 9333
 """
 
@@ -28,8 +38,8 @@ EXTRACT_JS = r"""
     const items = document.querySelectorAll('[data-qa="search_result"]');
     const results = [];
     for (const item of items) {
-        const authorEl = item.querySelector('[data-qa="message_sender_name"]');
-        const author = authorEl ? authorEl.textContent.trim() : '';
+        const userEl = item.querySelector('[data-qa="message_sender_name"]');
+        const user = userEl ? userEl.textContent.trim() : '';
 
         const tsEl = item.querySelector('[data-qa="timestamp_label"]');
         const timeText = tsEl ? tsEl.textContent.trim() : '';
@@ -37,10 +47,10 @@ EXTRACT_JS = r"""
         const archiveLink = item.querySelector('a[href*="/archives/"]');
         const href = archiveLink ? archiveLink.href : '';
 
-        const bodyEl = item.querySelector('[data-qa="message-text"]');
-        const body = bodyEl ? bodyEl.innerText.trim() : '';
+        const msgEl = item.querySelector('[data-qa="message-text"]');
+        const message = msgEl ? msgEl.innerText.trim() : '';
 
-        results.push({author, time: timeText, href, body});
+        results.push({user, time: timeText, href, message});
     }
     return JSON.stringify(results);
 })()
@@ -167,13 +177,13 @@ def main() -> None:
         return
 
     for i, msg in enumerate(messages, 1):
-        author = msg.get("author", "?")
+        user = msg.get("user", "?")
         date = msg.get("time", "?")
-        text = msg.get("body", "")
+        text = msg.get("message", "")
         cid = msg.get("channel_id", "")
-        ts = msg.get("message_ts", "")
+        ts = msg.get("message_id", "")
 
-        print(f"\n[{i}] {author} ({date})")
+        print(f"\n[{i}] {user} ({date})")
         if cid and ts:
             print(f"    id: {cid}/{ts}")
         if len(text) > 200:

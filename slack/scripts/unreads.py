@@ -46,9 +46,9 @@ def parse_unreads(text: str) -> list[dict]:
 
         # Author + timestamp pattern: name on one line, HH:MM on the next
         if i + 1 < len(lines) and re.match(r'^\d{1,2}:\d{2}$', lines[i + 1].strip()):
-            author = line
+            user = line
             timestamp = lines[i + 1].strip()
-            # Collect message body (all lines until next author/channel/end)
+            # Collect message body (all lines until next user/channel/end)
             i += 2
             body_lines: list[str] = []
             while i < len(lines):
@@ -56,7 +56,7 @@ def parse_unreads(text: str) -> list[dict]:
                 if not peek or peek in ("Mark as Read", "Press Esc to Mark as Read"):
                     i += 1
                     continue
-                # Next author (followed by timestamp)?
+                # Next user (followed by timestamp)?
                 if (
                     i + 1 < len(lines)
                     and re.match(r'^\d{1,2}:\d{2}$', lines[i + 1].strip())
@@ -75,9 +75,9 @@ def parse_unreads(text: str) -> list[dict]:
             messages.append(
                 {
                     "channel": current_channel,
-                    "author": author,
+                    "user": user,
                     "time": timestamp,
-                    "text": "\n".join(body_lines) if body_lines else "(no text / attachment)",
+                    "message": "\n".join(body_lines) if body_lines else "(no text / attachment)",
                 }
             )
             continue
@@ -90,9 +90,6 @@ def parse_unreads(text: str) -> list[dict]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Show unread Slack messages via CDP")
     parser.add_argument(
-        "--cdp", type=int, default=9222, help="CDP port (default: 9222)"
-    )
-    parser.add_argument(
         "--json", action="store_true", dest="as_json", help="Output as JSON"
     )
     parser.add_argument(
@@ -102,6 +99,9 @@ def main() -> None:
     parser.add_argument(
         "--names-only", action="store_true",
         help="Only list channel names with unreads (skip message extraction)",
+    )
+    parser.add_argument(
+        "--cdp", type=int, default=9222, help="CDP port (default: 9222)"
     )
     args = parser.parse_args()
     # Normalize: strip leading # and lowercase for comparison
@@ -171,7 +171,7 @@ def main() -> None:
             current_ch = msg["channel"]
             print(f"\n#{current_ch}")
             print("-" * (len(current_ch) + 1))
-        print(f"  {msg['author']} ({msg['time']}): {msg['text']}")
+        print(f"  {msg['user']} ({msg['time']}): {msg['message']}")
 
     print()
 

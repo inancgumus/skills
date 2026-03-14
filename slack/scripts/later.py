@@ -60,14 +60,14 @@ def parse_later_items(text: str, limit: int) -> list[dict]:
             break
         channel = lines[i].strip()
 
-        # Next non-empty line is author
+        # Next non-empty line is user
         i += 1
         while i < len(lines) and not lines[i].strip():
             i += 1
         if i >= len(lines):
-            items.append({"status": status, "channel": channel, "author": "", "text": ""})
+            items.append({"status": status, "channel": channel, "user": "", "message": ""})
             break
-        author = lines[i].strip()
+        user = lines[i].strip()
 
         # Collect message body until next status line or end
         i += 1
@@ -83,8 +83,8 @@ def parse_later_items(text: str, limit: int) -> list[dict]:
         items.append({
             "status": status,
             "channel": channel,
-            "author": author,
-            "text": " ".join(body_lines) if body_lines else "",
+            "user": user,
+            "message": " ".join(body_lines) if body_lines else "",
         })
 
     return items[:limit]
@@ -108,17 +108,14 @@ def parse_saved_item(lines: list[str]) -> dict:
         i = 1
 
     channel = lines[i] if i < len(lines) else ""
-    author = lines[i + 1] if i + 1 < len(lines) else ""
+    user = lines[i + 1] if i + 1 < len(lines) else ""
     body = " ".join(lines[i + 2:]) if i + 2 < len(lines) else ""
 
-    return {"status": status or "No due date", "channel": channel, "author": author, "text": body}
+    return {"status": status or "No due date", "channel": channel, "user": user, "message": body}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fetch Slack Later items via CDP")
-    parser.add_argument(
-        "--cdp", type=int, default=9222, help="CDP port (default: 9222)"
-    )
     parser.add_argument(
         "--json", action="store_true", dest="as_json", help="Output as JSON"
     )
@@ -131,6 +128,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--ids", action="store_true", help="Show message IDs (channel_id/message_ts)"
+    )
+    parser.add_argument(
+        "--cdp", type=int, default=9222, help="CDP port (default: 9222)"
     )
     args = parser.parse_args()
 
@@ -200,11 +200,11 @@ def main() -> None:
             if len(parts) == 2:
                 item["channel_id"] = parts[0]
                 ts_part = parts[1].split("_", 1)[0]
-                item["message_ts"] = ts_part
+                item["message_id"] = ts_part
             items.append(item)
             new_count += 1
 
-        if new_count == 0:
+        if new_count == 0 or len(items) >= args.limit:
             break
 
         # Scroll incrementally (half a viewport at a time) so the virtual
@@ -222,6 +222,8 @@ def main() -> None:
             }
         })()""", cdp=args.cdp)
         time.sleep(0.5)
+
+    items = items[:args.limit]
 
     if not items:
         print("No later items found.")
@@ -258,11 +260,11 @@ def main() -> None:
         print(f"{group}:")
         for item in groups[group]:
             ch = item["channel"]
-            text = item["text"]
+            text = item["message"]
             if len(text) > 120:
                 text = text[:120] + "..."
-            msg_id = f" [{item.get('channel_id','')}/{item.get('message_ts','')}]" if args.ids else ""
-            print(f"  - #{ch}: {item['author']}: {text}{msg_id}")
+            msg_id = f" [{item.get('channel_id','')}/{item.get('message_id','')}]" if args.ids else ""
+            print(f"  - #{ch}: {item['user']}: {text}{msg_id}")
         print()
 
 
