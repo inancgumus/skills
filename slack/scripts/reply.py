@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Send a message to a Slack channel, DM, or thread via the desktop app's CDP interface.
+"""Send a message to a Slack channel or thread via the desktop app's CDP interface.
 
 Requires:
   - Slack desktop app running with --remote-debugging-port=9222
   - agent-browser CLI on PATH
 
 Usage:
-  # Channel or DM message:
-  python reply.py "Jane Smith" "hello from the script"            # dry-run (default)
-  python reply.py "#general" "hey everyone" --send                # actually send
+  # Channel message (dry-run by default):
+  python reply.py C0123456789 "hello"
+  python reply.py "#general" "hey everyone" --send
 
-  # Thread reply (by message timestamp):
+  # Thread reply:
   python reply.py C0123456789/1234567890.123456 "thread reply" --send
   python reply.py C0123456789/p1234567890123456 "thread reply" --send
+  python reply.py https://app.slack.com/archives/C0123456789/p1234567890123456 "reply" --send
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from slack import (
     find_ref,
     go_to_channel,
     navigate_to,
-    parse_message_id,
+    resolve_ref,
     reply_in_thread,
 )
 
@@ -49,7 +50,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Send a message to a Slack channel, DM, or thread via CDP"
     )
-    parser.add_argument("target", help="Channel/DM name or CHANNEL_ID/MESSAGE_TS for thread replies")
+    parser.add_argument("message_id", help="Channel ID, #name, CHANNEL_ID/MESSAGE_TS, or Slack URL")
     parser.add_argument("message", help="Message text to send")
     parser.add_argument("--send", action="store_true", help="Actually send (default is dry-run)")
     parser.add_argument("--cdp", type=int, default=9222, help="CDP port (default: 9222)")
@@ -57,27 +58,27 @@ def main() -> None:
 
     ensure_slack_cdp(args.cdp)
 
-    # Thread reply mode: CHANNEL_ID/MESSAGE_TS
-    channel_id, message_ts = parse_message_id(args.target)
-    if channel_id:
+    channel_id, message_id = resolve_ref(args.message_id, args.cdp)
+
+    if message_id != "":
+        # Thread reply mode
         if not args.send:
             print(json.dumps({
-                "status": "dry-run", "target": args.target, "message": args.message,
+                "status": "dry-run", "target": args.message_id, "message": args.message,
                 "note": "Pass --send to send the thread reply.",
             }))
             return
-        # Ensure we're on the right channel first
         go_to_channel(channel_id, args.cdp)
-        ok = reply_in_thread(message_ts, args.message, args.cdp)
+        ok = reply_in_thread(message_id, args.message, args.cdp)
         print(json.dumps({
             "status": "sent" if ok else "failed",
-            "target": args.target, "message": args.message,
+            "target": args.message_id, "message": args.message,
         }))
         return
 
-    # Channel/DM mode
+    # Channel message mode
     ensure_clean_state(args.cdp)
-    target = args.target.lstrip("#")
+    target = channel_id
     if not navigate_to(target, args.cdp):
         sys.exit(f"Error: could not navigate to '{target}'.")
 
