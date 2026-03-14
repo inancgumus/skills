@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """Get message content from Slack by message ID(s).
 
-Same navigation pattern as reply.py — navigates to the channel,
-scrolls to the message, and extracts its full text content.
-
 Requires:
   - Slack desktop app running with --remote-debugging-port=9222
   - agent-browser CLI on PATH
@@ -18,15 +15,37 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
+import re
 import sys
 
 from slack import (
     ensure_slack_cdp,
+    get_channel_name,
     go_to_channel,
-    parse_message_id,
+    resolve_ref,
     read_message_content,
 )
+
+
+def ts_to_iso(ts: str) -> str:
+    dt = datetime.datetime.fromtimestamp(float(ts.split(".")[0]), datetime.timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def to_json_record(channel_id: str, channel: str, ts: str, data: dict | None) -> dict:
+    if data is None:
+        return {"channel_id": channel_id, "channel": channel, "message_id": ts, "error": "not found"}
+    return {
+        "channel_id": channel_id,
+        "channel": channel,
+        "message_id": ts,
+        "date": ts_to_iso(ts),
+        "user": data.get("user", ""),
+        "message": data.get("message", ""),
+        "reactions": data.get("reactions", []),
+    }
 
 
 def main() -> None:
@@ -41,30 +60,44 @@ def main() -> None:
     # Group by channel to minimize navigation
     by_channel: dict[str, list[str]] = {}
     for mid in args.message_ids:
-        cid, ts = parse_message_id(mid)
-        if not cid:
-            print(f"Invalid message ID: {mid}", file=sys.stderr)
-            continue
+        cid, ts = resolve_ref(mid, args.cdp)
+        if ts == "":
+            print("Error: message_id must reference a specific message, not just a channel.", file=sys.stderr)
+            sys.exit(1)
         by_channel.setdefault(cid, []).append(ts)
 
-    results: dict[str, str] = {}
+    results: list[tuple[str, str, str, dict | None]] = []
     for channel_id, timestamps in by_channel.items():
         go_to_channel(channel_id, args.cdp)
+        channel = get_channel_name(channel_id, args.cdp)
         for ts in timestamps:
-            mid = f"{channel_id}/{ts}"
-            content = read_message_content(ts, args.cdp)
-            results[mid] = content
+            data = read_message_content(ts, args.cdp)
+            results.append((channel_id, channel, ts, data))
 
     if args.as_json:
-        print(json.dumps(results, indent=2, ensure_ascii=False))
+        records = [to_json_record(cid, ch, ts, data) for cid, ch, ts, data in results]
+        out = records[0] if len(records) == 1 else records
+        print(json.dumps(out, indent=2, ensure_ascii=False))
         return
 
-    for mid, content in results.items():
-        print(f"\n--- {mid} ---")
-        if content:
-            print(content[:500] + ("..." if len(content) > 500 else ""))
-        else:
-            print("(not found)")
+    for channel_id, channel, ts, data in results:
+        if not data:
+            print(f"{channel_id}/{ts}: (not found)")
+            continue
+        user = data.get("user", "?")
+        date_label = data.get("dateLabel", "")
+        message = data.get("message", "")
+        reactions = data.get("reactions", [])
+
+        m = re.search(r"\d{1,2}:\d{2}", date_label)
+        time_str = m.group() if m else date_label
+        print(f"{user} ({time_str}):")
+        print(message)
+        if reactions:
+            print("--")
+            print("Reactions:")
+            for r in reactions:
+                print(f"- {r['user']}: :{r['emoji']}:")
 
 
 if __name__ == "__main__":

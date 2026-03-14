@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Collect message IDs for a specific date from a Slack channel.
 
-Uses Slack search to find all messages, returning their IDs
-(channel_id/message_ts). Use get.py to retrieve message content.
+Navigates to the channel, jumps to the date, and reads message timestamps
+directly from the DOM. This is more reliable than search — the channel pane
+only shows top-level messages, so thread replies are excluded automatically,
+and bot/integration messages are included.
 
 Requires:
   - Slack desktop app running with --remote-debugging-port=9222
@@ -15,61 +17,108 @@ Usage:
   python collect.py "#general" 2026-03-09 --replies --json
   python collect.py "#general" 2026-03-09 --limit 10
   python collect.py "#general" 2026-03-09 --cdp 9333
+  python collect.py "C042WNMBYQM" 2026-03-09
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
-import os
-import subprocess
 import sys
+import time
 
 from slack import (
+    DOM,
+    ab_eval,
     close_thread,
+    decode_ab_json,
     ensure_slack_cdp,
+    get_channel_name,
     get_thread_reply_ids,
     go_to_channel,
+    jump_to_date,
     open_thread,
+    resolve_ref,
 )
 
 
-def search_ids(channel: str, date_str: str, limit: int, cdp: int) -> list[dict]:
-    """Run search.py and return results with IDs."""
-    script = os.path.join(os.path.dirname(__file__), "search.py")
-    query = f"in:#{channel} on:{date_str}"
+def collect_top_level_ids(channel_id: str, date_str: str, limit: int, cdp: int) -> list[dict]:
+    """Navigate to the channel, jump to date, collect top-level message IDs from DOM.
 
-    result = subprocess.run(
-        [sys.executable, script, query, "--json", "--limit", str(limit), "--cdp", str(cdp)],
-        capture_output=True, text=True, timeout=60,
-    )
-    if result.returncode != 0:
-        print(f"search.py failed: {result.stderr}", file=sys.stderr)
+    The channel message pane only renders top-level messages, so no filtering
+    is needed to exclude thread replies.
+    """
+    year, month, day = (int(p) for p in date_str.split("-"))
+    day_start = datetime.datetime(year, month, day).timestamp()
+    day_end = datetime.datetime(year, month, day, 23, 59, 59).timestamp()
+
+    go_to_channel(channel_id, cdp)
+    if not jump_to_date(year, month, day, cdp):
         return []
 
-    try:
-        messages = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return []
+    COLLECT_JS = f"""(() => {{
+        const msgs = [...document.querySelectorAll('{DOM["MESSAGE"]}')];
+        return JSON.stringify(msgs.map(m => m.dataset.msgTs).filter(Boolean));
+    }})()"""
 
-    return [m for m in messages if m.get("message_ts") and m.get("channel_id")]
+    SCROLL_JS = f"""(() => {{
+        const msgs = document.querySelectorAll('{DOM["MESSAGE"]}');
+        if (!msgs.length) return false;
+        msgs[msgs.length - 1].scrollIntoView({{block: 'start'}});
+        return true;
+    }})()"""
+
+    seen: set[str] = set()
+    results: list[dict] = []
+
+    for _ in range(60):
+        raw = ab_eval(COLLECT_JS, cdp=cdp)
+        all_ts = decode_ab_json(raw)
+        if not isinstance(all_ts, list):
+            break
+
+        past_end = False
+        for ts in all_ts:
+            if ts in seen:
+                continue
+            try:
+                unix = float(ts)
+            except ValueError:
+                continue
+            if unix > day_end:
+                past_end = True
+                continue
+            if unix < day_start:
+                continue
+            seen.add(ts)
+            results.append({"channel_id": channel_id, "message_id": ts})
+            if len(results) >= limit:
+                return results
+
+        if past_end:
+            break
+
+        ab_eval(SCROLL_JS, cdp=cdp)
+        time.sleep(0.5)
+
+    return results
 
 
 def collect_reply_ids(messages: list[dict], cdp: int) -> dict[str, list[str]]:
     """For each message, open its thread and collect reply timestamps.
 
-    Returns {message_ts: [reply_ts, ...]} for messages that have replies.
+    Returns {message_id: [reply_ts, ...]} for messages that have replies.
     """
     replies: dict[str, list[str]] = {}
     if not messages:
         return replies
 
-    # Navigate to the channel once
     channel_id = messages[0]["channel_id"]
     go_to_channel(channel_id, cdp)
 
     for msg in messages:
-        msg_ts = msg["message_ts"]
+        msg_ts = msg["message_id"]
         if not open_thread(msg_ts, cdp):
             continue
         reply_ids = get_thread_reply_ids(cdp)
@@ -92,8 +141,9 @@ def main() -> None:
 
     ensure_slack_cdp(args.cdp)
 
-    channel = args.channel.lstrip("#")
-    messages = search_ids(channel, args.date, args.limit, args.cdp)
+    channel_id, _ = resolve_ref(args.channel, args.cdp)
+
+    messages = collect_top_level_ids(channel_id, args.date, args.limit, args.cdp)
 
     replies: dict[str, list[str]] = {}
     if args.replies and messages:
@@ -102,10 +152,10 @@ def main() -> None:
     if args.as_json:
         out = []
         for m in messages:
-            mid = f"{m['channel_id']}/{m['message_ts']}"
+            mid = f"{m['channel_id']}/{m['message_id']}"
             entry: dict = {"message_id": mid}
             if args.replies:
-                r = replies.get(m["message_ts"], [])
+                r = replies.get(m["message_id"], [])
                 entry["reply_ids"] = [f"{m['channel_id']}/{ts}" for ts in r]
             out.append(entry)
         print(json.dumps(out, indent=2))
@@ -113,10 +163,10 @@ def main() -> None:
 
     print(f"Found {len(messages)} messages for {args.date}:\n")
     for m in messages:
-        mid = f"{m['channel_id']}/{m['message_ts']}"
+        mid = f"{m['channel_id']}/{m['message_id']}"
         print(f"  {mid}")
         if args.replies:
-            r = replies.get(m["message_ts"], [])
+            r = replies.get(m["message_id"], [])
             for rts in r:
                 print(f"    reply: {m['channel_id']}/{rts}")
 
