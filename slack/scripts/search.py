@@ -148,16 +148,17 @@ def main() -> None:
 
     ensure_slack_cdp(args.cdp)
 
-    # 1. Ensure clean state then open search via Cmd+F.
-    ensure_clean_state(args.cdp)
-    ab("press", "Meta+f", cdp=args.cdp)
-    time.sleep(0.5)
+    # 1. Ensure clean state then open search via the Search button.
+    snapshot = ensure_clean_state(args.cdp)
+    search_btn = find_ref(snapshot, r'button "Search"') or find_ref(snapshot, r'button "Clear')
+    if not search_btn:
+        sys.exit("Error: could not find the Search button.")
+    ab("click", f"@{search_btn}", cdp=args.cdp)
+    time.sleep(1)
 
     # 2. Fill query and submit
     snapshot = ab("snapshot", "-i", cdp=args.cdp)
     query_ref = find_ref(snapshot, r'combobox.*Query')
-    if not query_ref:
-        query_ref = find_ref(snapshot, r'(combobox|textbox|input)')
     if not query_ref:
         sys.exit("Error: could not find the search input.")
 

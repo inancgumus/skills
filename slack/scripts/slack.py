@@ -132,7 +132,7 @@ def find_ref(snapshot: str, label_pattern: str) -> str | None:
     """Find the first [ref=eN] whose line matches *label_pattern* (case-insensitive)."""
     for line in snapshot.splitlines():
         if re.search(label_pattern, line, re.IGNORECASE):
-            m = re.search(r'\[ref=(e\d+)\]', line)
+            m = re.search(r'\bref=(e\d+)', line)
             if m:
                 return m.group(1)
     return None
@@ -143,7 +143,7 @@ def find_all_refs(snapshot: str, label_pattern: str) -> list[str]:
     refs = []
     for line in snapshot.splitlines():
         if re.search(label_pattern, line, re.IGNORECASE):
-            m = re.search(r'\[ref=(e\d+)\]', line)
+            m = re.search(r'\bref=(e\d+)', line)
             if m:
                 refs.append(m.group(1))
     return refs
@@ -591,7 +591,7 @@ def find_ref_after(snapshot: str, anchor_ref: str, pattern: str) -> str | None:
         if f"[ref={anchor_ref}]" in line:
             found_anchor = True
         if found_anchor and re.search(pattern, line, re.IGNORECASE):
-            m = re.search(r'\[ref=(e\d+)\]', line)
+            m = re.search(r'\bref=(e\d+)', line)
             if m:
                 return m.group(1)
     return None
