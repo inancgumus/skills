@@ -150,7 +150,15 @@ def main() -> None:
 
     # 1. Ensure clean state then open search via the Search button.
     snapshot = ensure_clean_state(args.cdp)
-    search_btn = find_ref(snapshot, r'button "Search"') or find_ref(snapshot, r'button "Clear')
+
+    # Clear any previous search first so clicking Search opens a fresh combobox.
+    clear_btn = find_ref(snapshot, r'button "Clear search"')
+    if clear_btn:
+        ab("click", f"@{clear_btn}", cdp=args.cdp)
+        time.sleep(0.5)
+        snapshot = ab("snapshot", "-i", cdp=args.cdp)
+
+    search_btn = find_ref(snapshot, r'button "Search"')
     if not search_btn:
         sys.exit("Error: could not find the Search button.")
     ab("click", f"@{search_btn}", cdp=args.cdp)
