@@ -115,26 +115,39 @@ PAGE_INFO_JS = r"""
 """
 
 
-def goto_page(cdp: int, page: int) -> bool:
-    js = f"""
-    (() => {{
-        const btn = document.querySelector('[data-qa="c-pagination_page_btn_{page}"]');
-        if (btn) {{ btn.click(); return '"clicked"'; }}
-        const fwd = document.querySelector('[data-qa="c-pagination_forward_btn"]');
-        if (fwd && !fwd.classList.contains('c-button--disabled')) {{ fwd.click(); return '"next"'; }}
-        return '"not_found"';
-    }})()
-    """
-    raw = ab_eval(js, cdp=cdp)
-    status = decode_ab_json(raw)
-    if status == "not_found":
-        return False
-    time.sleep(3)
-    if status == "next":
+def goto_page(cdp: int, page: int, _max_attempts: int = 15) -> bool:
+    """Navigate to a pagination page. Supports forward and backward."""
+    for _ in range(_max_attempts):
+        # Try clicking the page button directly (works if it's in the visible window)
+        js = f"""(() => {{
+            const btn = document.querySelector('[data-qa="c-pagination_page_btn_{page}"]');
+            if (btn) {{ btn.click(); return '"clicked"'; }}
+            return '"not_visible"';
+        }})()"""
+        if decode_ab_json(ab_eval(js, cdp=cdp)) == "clicked":
+            time.sleep(3)
+            return True
+
         current = _current_page(cdp)
-        if current < page:
-            return goto_page(cdp, page)
-    return True
+        if current == page:
+            return True
+        if current == 0:
+            return False
+
+        # Pick direction
+        btn_qa = "c-pagination_forward_btn" if page > current else "c-pagination_back_btn"
+        js = f"""(() => {{
+            const btn = document.querySelector('[data-qa="{btn_qa}"]');
+            if (btn && !btn.classList.contains('c-button--disabled')) {{
+                btn.click(); return '"ok"';
+            }}
+            return '"blocked"';
+        }})()"""
+        if decode_ab_json(ab_eval(js, cdp=cdp)) == "blocked":
+            return False
+        time.sleep(3)
+
+    return False
 
 
 def _current_page(cdp: int) -> int:
@@ -147,6 +160,58 @@ def _current_page(cdp: int) -> int:
         return int(raw)
     except ValueError:
         return 0
+
+
+def _get_search_state(cdp: int) -> tuple[str, int]:
+    """Return (query, current_page) if Slack is showing search results, else ('', 0)."""
+    js = r"""(() => {
+        const btns = [...document.querySelectorAll('button')];
+        const sb = btns.find(b => /^Search:\s/.test(b.textContent.trim()));
+        if (!sb) return JSON.stringify({q: '', p: 0});
+        const q = sb.textContent.trim().replace(/^Search:\s*/, '');
+        if (!document.querySelectorAll('[data-qa="search_result"]').length)
+            return JSON.stringify({q: '', p: 0});
+        const active = document.querySelector('[data-qa*="pagination_page_btn"][aria-current="page"]');
+        const p = active ? parseInt(active.textContent.trim()) : 1;
+        return JSON.stringify({q, p});
+    })()"""
+    raw = ab_eval(js, cdp=cdp)
+    state = decode_ab_json(raw)
+    if not isinstance(state, dict):
+        return ("", 0)
+    return (state.get("q", ""), state.get("p", 0))
+
+
+def _do_search(query: str, cdp: int) -> None:
+    """Perform a fresh search: clear state, open search, fill query, submit."""
+    snapshot = ensure_clean_state(cdp)
+
+    clear_btn = find_ref(snapshot, r'button "Clear search"')
+    if clear_btn:
+        ab("click", f"@{clear_btn}", cdp=cdp)
+        time.sleep(0.5)
+        snapshot = ab("snapshot", "-i", cdp=cdp)
+
+    search_btn = find_ref(snapshot, r'button "Search"')
+    if not search_btn:
+        sys.exit("Error: could not find the Search button.")
+    ab("click", f"@{search_btn}", cdp=cdp)
+    time.sleep(1)
+
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+    query_ref = find_ref(snapshot, r'combobox.*Query')
+    if not query_ref:
+        sys.exit("Error: could not find the search input.")
+
+    ab("fill", f"@{query_ref}", query, cdp=cdp)
+    time.sleep(1)
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+    search_option = find_ref(snapshot, rf'option "Search for: {re.escape(query)}"')
+    if search_option:
+        ab("click", f"@{search_option}", cdp=cdp)
+    else:
+        ab("press", "Enter", cdp=cdp)
+    time.sleep(3)
 
 
 def get_page_info(cdp: int) -> dict:
@@ -211,41 +276,21 @@ def main() -> None:
 
     ensure_slack_cdp(args.cdp)
 
-    # 1. Ensure clean state then open search via the Search button.
-    snapshot = ensure_clean_state(args.cdp)
+    # Reuse existing search results if the query matches.
+    existing_query, current_page = _get_search_state(args.cdp)
+    on_right_page = False
 
-    # Clear any previous search first so clicking Search opens a fresh combobox.
-    clear_btn = find_ref(snapshot, r'button "Clear search"')
-    if clear_btn:
-        ab("click", f"@{clear_btn}", cdp=args.cdp)
-        time.sleep(0.5)
-        snapshot = ab("snapshot", "-i", cdp=args.cdp)
+    if existing_query.lower() == args.query.lower() and current_page > 0:
+        if current_page == args.page:
+            on_right_page = True
+        else:
+            on_right_page = goto_page(args.cdp, args.page)
 
-    search_btn = find_ref(snapshot, r'button "Search"')
-    if not search_btn:
-        sys.exit("Error: could not find the Search button.")
-    ab("click", f"@{search_btn}", cdp=args.cdp)
-    time.sleep(1)
-
-    # 2. Fill query and submit
-    snapshot = ab("snapshot", "-i", cdp=args.cdp)
-    query_ref = find_ref(snapshot, r'combobox.*Query')
-    if not query_ref:
-        sys.exit("Error: could not find the search input.")
-
-    ab("fill", f"@{query_ref}", args.query, cdp=args.cdp)
-    time.sleep(1)
-    snapshot = ab("snapshot", "-i", cdp=args.cdp)
-    search_option = find_ref(snapshot, rf'option "Search for: {re.escape(args.query)}"')
-    if search_option:
-        ab("click", f"@{search_option}", cdp=args.cdp)
-    else:
-        ab("press", "Enter", cdp=args.cdp)
-    time.sleep(3)
-
-    if args.page > 1:
-        if not goto_page(args.cdp, args.page):
-            sys.exit(f"Error: could not navigate to page {args.page}.")
+    if not on_right_page:
+        _do_search(args.query, args.cdp)
+        if args.page > 1:
+            if not goto_page(args.cdp, args.page):
+                sys.exit(f"Error: could not navigate to page {args.page}.")
 
     info = get_page_info(args.cdp)
     messages = extract_and_scroll(args.cdp, args.limit)
