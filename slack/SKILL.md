@@ -83,6 +83,7 @@ python3 <skill-path>/scripts/emoji.py "https://…/archives/C…/p…" fire
 ```bash
 python3 <skill-path>/scripts/get.py C0123456789/1234567890.123456
 python3 <skill-path>/scripts/get.py "https://…/archives/C…/p…" --json
+python3 <skill-path>/scripts/get.py C0123456789/1234567890.123456 --with-replies --json
 python3 <skill-path>/scripts/get.py C0123456789/111.1 C0123456789/222.2  # multiple
 ```
 

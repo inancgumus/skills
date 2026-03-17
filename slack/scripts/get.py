@@ -21,11 +21,15 @@ import re
 import sys
 
 from slack import (
+    close_thread,
     ensure_slack_cdp,
     get_channel_name,
     go_to_channel,
-    resolve_ref,
+    open_thread,
     read_message_content,
+    read_thread_messages,
+    resolve_ref,
+    scroll_to_message,
 )
 
 
@@ -52,6 +56,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Get message content by ID(s)")
     parser.add_argument("message_ids", nargs="+", help="CHANNEL_ID/MESSAGE_TS (one or more)")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON")
+    parser.add_argument("--with-replies", action="store_true", dest="with_replies", help="Include thread replies")
     parser.add_argument("--cdp", type=int, default=9222, help="CDP port (default: 9222)")
     args = parser.parse_args()
 
@@ -74,8 +79,26 @@ def main() -> None:
             data = read_message_content(ts, args.cdp)
             results.append((channel_id, channel, ts, data))
 
+    # Read thread replies if requested
+    thread_msgs: dict[str, dict[str, str]] = {}  # parent_ts → {ts: content}
+    if args.with_replies:
+        for channel_id, timestamps in by_channel.items():
+            go_to_channel(channel_id, args.cdp)
+            for ts in timestamps:
+                scroll_to_message(ts, args.cdp)
+                if open_thread(ts, args.cdp):
+                    thread_msgs[ts] = read_thread_messages(args.cdp)
+                    close_thread(args.cdp)
+
     if args.as_json:
         records = [to_json_record(cid, ch, ts, data) for cid, ch, ts, data in results]
+        if args.with_replies:
+            for rec in records:
+                replies = thread_msgs.get(rec["message_id"], {})
+                # Remove parent from replies dict
+                replies.pop(rec["message_id"], None)
+                rec["replies"] = [{"message_id": rts, "date": ts_to_iso(rts), "message": txt}
+                                  for rts, txt in replies.items()]
         out = records[0] if len(records) == 1 else records
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
@@ -98,6 +121,13 @@ def main() -> None:
             print("Reactions:")
             for r in reactions:
                 print(f"- {r['user']}: :{r['emoji']}:")
+        if args.with_replies and ts in thread_msgs:
+            replies = thread_msgs[ts]
+            replies.pop(ts, None)
+            if replies:
+                print(f"\n--- {len(replies)} replies ---")
+                for rts, txt in replies.items():
+                    print(f"\n{txt}")
 
 
 if __name__ == "__main__":
