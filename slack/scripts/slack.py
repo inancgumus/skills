@@ -862,7 +862,7 @@ def read_thread_messages(cdp: int = 9222) -> dict[str, str]:
         return JSON.stringify(result);
     })()"""
 
-    SCROLL_JS = r"""(() => {
+    SCROLL_DOWN_JS = r"""(() => {
         const panel = document.querySelector('.p-flexpane, [data-qa="thread_view"]');
         if (!panel) return false;
         const msgs = panel.querySelectorAll('[data-qa="message_container"]');
@@ -871,19 +871,33 @@ def read_thread_messages(cdp: int = 9222) -> dict[str, str]:
         return true;
     })()"""
 
-    all_msgs: dict[str, str] = {}
-    for _ in range(60):
-        raw = ab_eval(COLLECT_JS, cdp=cdp)
-        batch = decode_ab_json(raw)
-        if not isinstance(batch, dict):
-            break
-        before = len(all_msgs)
-        all_msgs.update(batch)
-        if len(all_msgs) == before:
-            break
-        ab_eval(SCROLL_JS, cdp=cdp)
-        time.sleep(0.5)
+    SCROLL_UP_JS = r"""(() => {
+        const panel = document.querySelector('.p-flexpane, [data-qa="thread_view"]');
+        if (!panel) return false;
+        const msgs = panel.querySelectorAll('[data-qa="message_container"]');
+        if (!msgs.length) return false;
+        msgs[0].scrollIntoView({block: 'end'});
+        return true;
+    })()"""
 
+    def _collect_and_scroll(scroll_js: str) -> dict[str, str]:
+        msgs: dict[str, str] = {}
+        for _ in range(60):
+            raw = ab_eval(COLLECT_JS, cdp=cdp)
+            batch = decode_ab_json(raw)
+            if not isinstance(batch, dict):
+                break
+            before = len(msgs)
+            msgs.update(batch)
+            if len(msgs) == before:
+                break
+            ab_eval(scroll_js, cdp=cdp)
+            time.sleep(0.5)
+        return msgs
+
+    # Scroll up first to reach the beginning, then down to the end
+    all_msgs = _collect_and_scroll(SCROLL_UP_JS)
+    all_msgs.update(_collect_and_scroll(SCROLL_DOWN_JS))
     return all_msgs
 
 
