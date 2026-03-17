@@ -846,10 +846,11 @@ def read_message_content(msg_ts: str, cdp: int = 9222) -> dict | None:
 def read_thread_messages(cdp: int = 9222) -> dict[str, str]:
     """Read all message content from the open thread panel.
 
+    Scrolls through the virtual list to load all messages.
     Returns {message_ts: content} for every message in the thread
     (including the parent). The thread panel must already be open.
     """
-    raw = ab_eval(r"""(() => {
+    COLLECT_JS = r"""(() => {
         const panel = document.querySelector('.p-flexpane, [data-qa="thread_view"]');
         if (!panel) return '{}';
         const msgs = [...panel.querySelectorAll('[data-qa="message_container"]')];
@@ -859,9 +860,31 @@ def read_thread_messages(cdp: int = 9222) -> dict[str, str]:
             if (ts) result[ts] = m.innerText.trim();
         }
         return JSON.stringify(result);
-    })()""", cdp=cdp)
-    data = decode_ab_json(raw)
-    return data if isinstance(data, dict) else {}
+    })()"""
+
+    SCROLL_JS = r"""(() => {
+        const panel = document.querySelector('.p-flexpane, [data-qa="thread_view"]');
+        if (!panel) return false;
+        const msgs = panel.querySelectorAll('[data-qa="message_container"]');
+        if (!msgs.length) return false;
+        msgs[msgs.length - 1].scrollIntoView({block: 'start'});
+        return true;
+    })()"""
+
+    all_msgs: dict[str, str] = {}
+    for _ in range(60):
+        raw = ab_eval(COLLECT_JS, cdp=cdp)
+        batch = decode_ab_json(raw)
+        if not isinstance(batch, dict):
+            break
+        before = len(all_msgs)
+        all_msgs.update(batch)
+        if len(all_msgs) == before:
+            break
+        ab_eval(SCROLL_JS, cdp=cdp)
+        time.sleep(0.5)
+
+    return all_msgs
 
 
 def reply_in_thread(msg_ts: str, text: str, cdp: int = 9222) -> bool:
