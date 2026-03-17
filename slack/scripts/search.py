@@ -19,6 +19,7 @@ Usage:
   python search.py "from:@alice has:file after:2024-01-01"
   python search.py "standup in:#general before:2024-06-01" --limit 5
   python search.py "error has:reaction" --json
+  python search.py "query" --page 2
   python search.py "query" --cdp 9333
 """
 
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 
@@ -97,6 +99,66 @@ SCROLL_TOP_JS = r"""
 """
 
 
+PAGE_INFO_JS = r"""
+(() => {
+    let results = 0;
+    const rc = document.querySelector('[class*="resultCounts"]');
+    if (rc) {
+        const m = rc.textContent.match(/([\d,]+)\s*results?/i);
+        if (m) results = parseInt(m[1].replace(/,/g, ''));
+    }
+    let pages = 0;
+    const btns = document.querySelectorAll('[data-qa*="pagination_page_btn"]');
+    btns.forEach(b => { const n = parseInt(b.textContent); if (n > pages) pages = n; });
+    return JSON.stringify({results, pages});
+})()
+"""
+
+
+def goto_page(cdp: int, page: int) -> bool:
+    js = f"""
+    (() => {{
+        const btn = document.querySelector('[data-qa="c-pagination_page_btn_{page}"]');
+        if (btn) {{ btn.click(); return '"clicked"'; }}
+        const fwd = document.querySelector('[data-qa="c-pagination_forward_btn"]');
+        if (fwd && !fwd.classList.contains('c-button--disabled')) {{ fwd.click(); return '"next"'; }}
+        return '"not_found"';
+    }})()
+    """
+    raw = ab_eval(js, cdp=cdp)
+    status = decode_ab_json(raw)
+    if status == "not_found":
+        return False
+    time.sleep(3)
+    if status == "next":
+        current = _current_page(cdp)
+        if current < page:
+            return goto_page(cdp, page)
+    return True
+
+
+def _current_page(cdp: int) -> int:
+    js = r"""(() => {
+        const active = document.querySelector('[data-qa*="pagination_page_btn"][aria-current="page"]');
+        return active ? active.textContent.trim() : '0';
+    })()"""
+    raw = ab_eval(js, cdp=cdp).strip().strip('"').strip("'")
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
+def get_page_info(cdp: int) -> dict:
+    raw = ab_eval(PAGE_INFO_JS, cdp=cdp)
+    info = decode_ab_json(raw)
+    if isinstance(info, str):
+        info = decode_ab_json(info)
+    if not isinstance(info, dict):
+        return {"results": 0, "pages": 0}
+    return info
+
+
 def extract_and_scroll(cdp: int, limit: int) -> list[dict]:
     """Scroll through the search results virtual list, collecting all results."""
     seen_hrefs: set[str] = set()
@@ -143,6 +205,7 @@ def main() -> None:
     parser.add_argument("query", help="Search query string")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON with message IDs")
     parser.add_argument("--limit", type=int, default=20, help="Max results to return (default: 20)")
+    parser.add_argument("--page", type=int, default=1, help="Result page to fetch (default: 1)")
     parser.add_argument("--cdp", type=int, default=9222, help="CDP port (default: 9222)")
     args = parser.parse_args()
 
@@ -171,19 +234,38 @@ def main() -> None:
         sys.exit("Error: could not find the search input.")
 
     ab("fill", f"@{query_ref}", args.query, cdp=args.cdp)
-    ab("press", "Enter", cdp=args.cdp)
+    time.sleep(1)
+    snapshot = ab("snapshot", "-i", cdp=args.cdp)
+    search_option = find_ref(snapshot, rf'option "Search for: {re.escape(args.query)}"')
+    if search_option:
+        ab("click", f"@{search_option}", cdp=args.cdp)
+    else:
+        ab("press", "Enter", cdp=args.cdp)
     time.sleep(3)
 
-    # 3. Scroll and collect all results from the virtual list
+    if args.page > 1:
+        if not goto_page(args.cdp, args.page):
+            sys.exit(f"Error: could not navigate to page {args.page}.")
+
+    info = get_page_info(args.cdp)
     messages = extract_and_scroll(args.cdp, args.limit)
 
     if not messages:
         print("No results found.")
         return
 
+    results = info.get("results", 0)
+    pages = info.get("pages", 0)
+
     if args.as_json:
-        print(json.dumps(messages, indent=2, ensure_ascii=False))
+        print(json.dumps({
+            "results": results,
+            "pages": pages,
+            "messages": messages,
+        }, indent=2, ensure_ascii=False))
         return
+
+    print(f"{results:,} results, {pages} pages")
 
     for i, msg in enumerate(messages, 1):
         user = msg.get("user", "?")
@@ -199,7 +281,7 @@ def main() -> None:
             text = text[:200] + "..."
         print(f"    {text}")
 
-    print(f"\n({len(messages)} result{'s' if len(messages) != 1 else ''})")
+    print(f"\n({len(messages)} shown, {results:,} results, {pages} pages)")
 
 
 if __name__ == "__main__":

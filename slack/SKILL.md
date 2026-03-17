@@ -41,12 +41,19 @@ python3 <skill-path>/scripts/unreads.py --cdp 9333
 
 ### `scripts/search.py` — Search messages
 
-Returns structured results with `channel_id`, `message_id`, `thread_id`.
+Returns structured results with `channel_id`, `message_id`, `thread_id`. Output includes `results` (total count) and `pages` (visible pages).
 
 ```bash
 python3 <skill-path>/scripts/search.py "query"
 python3 <skill-path>/scripts/search.py "in:#channel query" --json
 python3 <skill-path>/scripts/search.py "from:@user query" --limit 5
+```
+
+**Pagination:** `--page N` fetches a specific result page. Slack loads pages dynamically — navigating to the last visible page may reveal more pages.
+
+```bash
+python3 <skill-path>/scripts/search.py "query" --page 2
+python3 <skill-path>/scripts/search.py "query" --page 3 --limit 10
 ```
 
 Slack search syntax: `in:#channel`, `from:@user`, `after:YYYY-MM-DD`, `before:YYYY-MM-DD`, `has:reaction`, `has:file`
