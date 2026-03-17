@@ -43,7 +43,7 @@ python3 <skill-path>/scripts/unreads.py --cdp 9333
 
 ### `scripts/search.py` — Search messages
 
-Returns up to 20 results per page with `channel_id`, `message_id`, `thread_id`. Output includes `results` (total count) and `pages` (visible pages).
+Returns up to 20 results per page with `channel_id`, `message_id`, `thread_id`. Output includes `results` (total count) and `pages` (visible pages). Messages are truncated — use `get.py` with the `href` to read full content.
 
 ```bash
 python3 <skill-path>/scripts/search.py "query"
