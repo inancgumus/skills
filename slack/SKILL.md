@@ -33,7 +33,8 @@ Always pass hrefs as-is. Never strip or reconstruct them — query parameters ar
 ## Common workflows
 
 - **Search → read:** `search.py --json` finds messages (truncated). Pass the `href` to `get.py` to read full content.
-- **Read thread:** `get.py HREF --with-replies --json` returns parent + all replies.
+- **Read thread from search:** `search.py "query" --click N --json` clicks the Nth result and returns the full thread (parent + all replies).
+- **Read thread by ref:** `get.py HREF --with-replies --json` returns parent + all replies.
 - **Page results:** `search.py --page 1`, check `pages`, then `--page 2`, etc.
 - **Check unreads:** `unreads.py --json`, then `get.py` per href for full content.
 - **Browse a day:** `collect.py "#channel" YYYY-MM-DD --json` gets message IDs for a date (includes bot messages). Compose with `get.py` to read, `emoji.py` to react, or `--replies` to include reply IDs.
@@ -58,6 +59,7 @@ Returns up to 20 results per page with `channel_id`, `message_id`, `thread_id`. 
 ```bash
 python3 <skill-path>/scripts/search.py "query"
 python3 <skill-path>/scripts/search.py "in:#channel query" --json
+python3 <skill-path>/scripts/search.py "query" --click 3 --json     # click 3rd result, read full thread
 ```
 
 **Pagination:** `--page N` fetches a specific result page. Check the `pages` count from the output before requesting further pages. Repeated calls with the same query reuse the existing results. Slack loads pages dynamically — navigating to the last visible page may reveal more pages. Sometimes a more specific search term is better than paging. But when thoroughness matters, paging through results is important to collect more data.

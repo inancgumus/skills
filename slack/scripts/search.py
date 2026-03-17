@@ -31,7 +31,7 @@ import re
 import sys
 import time
 
-from slack import ab, ab_eval, decode_ab_json, ensure_clean_state, ensure_slack_cdp, find_ref, parse_slack_url
+from slack import ab, ab_eval, decode_ab_json, ensure_clean_state, ensure_slack_cdp, find_ref, parse_slack_url, read_thread_messages
 
 
 # Extract structured data from [data-qa="search_result"] elements.
@@ -270,6 +270,7 @@ def main() -> None:
     parser.add_argument("query", help="Search query string")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON with message IDs")
     parser.add_argument("--page", type=int, default=1, help="Result page to fetch (default: 1)")
+    parser.add_argument("--click", type=int, default=0, help="Click on the Nth result (1-based) to navigate there")
     parser.add_argument("--cdp", type=int, default=9222, help="CDP port (default: 9222)")
     args = parser.parse_args()
 
@@ -304,6 +305,35 @@ def main() -> None:
             print(json.dumps({"results": 0, "pages": 0, "messages": []}))
         else:
             print("No results found.")
+        return
+
+    if args.click:
+        n = args.click
+        if n < 1 or n > len(messages):
+            print(f"Error: --click {n} out of range (1-{len(messages)}).", file=sys.stderr)
+            sys.exit(1)
+        # Scroll to top first so indices match, then click the Nth result's timestamp link
+        ab_eval(SCROLL_TOP_JS, cdp=args.cdp)
+        time.sleep(0.5)
+        js = f"""(() => {{
+            const items = document.querySelectorAll('[data-qa="search_result"]');
+            const item = items[{n - 1}];
+            if (!item) return '"not_found"';
+            const link = item.querySelector('a[href*="/archives/"]');
+            if (link) {{ link.click(); return '"clicked"'; }}
+            return '"no_link"';
+        }})()"""
+        result = decode_ab_json(ab_eval(js, cdp=args.cdp))
+        time.sleep(2)
+        msg = messages[n - 1]
+        thread = read_thread_messages(args.cdp)
+        if args.as_json:
+            replies = [{"message_id": ts, "message": txt} for ts, txt in thread.items()]
+            print(json.dumps({"clicked": n, "href": msg.get("href", ""), "thread": replies}, ensure_ascii=False))
+        else:
+            print(f"Clicked result {n}: {msg.get('user', '?')} ({msg.get('time', '?')})")
+            for ts, txt in thread.items():
+                print(f"\n{txt}")
         return
 
     results = info.get("results", 0)
