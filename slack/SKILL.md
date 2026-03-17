@@ -30,6 +30,16 @@ Channel names must start with `#`, DM names with `@`.
 
 Always pass hrefs as-is. Never strip or reconstruct them — query parameters are required for Slack to work.
 
+## Common workflows
+
+- **Search → read:** `search.py --json` finds messages (truncated). Pass the `href` to `get.py` to read full content.
+- **Read thread:** `get.py HREF --with-replies --json` returns parent + all replies.
+- **Page results:** `search.py --page 1`, check `pages`, then `--page 2`, etc.
+- **Check unreads:** `unreads.py --json`, then `get.py` per href for full content.
+- **Browse a day:** `collect.py "#channel" YYYY-MM-DD --json` gets message IDs for a date (includes bot messages). Compose with `get.py` to read, `emoji.py` to react, or `--replies` to include reply IDs.
+- **Send/reply:** `reply.py REF "text" --send`. Channel ref → new message, message ref → thread reply.
+- **Saved items:** `later.py --json` reads your Later list.
+
 ---
 
 ### `scripts/unreads.py` — Fetch unread messages
