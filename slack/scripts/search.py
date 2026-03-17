@@ -17,7 +17,7 @@ Usage:
   python search.py "deployment failed"
   python search.py "in:#ops-alerts deployment failed"
   python search.py "from:@alice has:file after:2024-01-01"
-  python search.py "standup in:#general before:2024-06-01" --limit 5
+  python search.py "standup in:#general before:2024-06-01"
   python search.py "error has:reaction" --json
   python search.py "query" --page 2
   python search.py "query" --cdp 9333
@@ -269,7 +269,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Search Slack messages via CDP")
     parser.add_argument("query", help="Search query string")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON with message IDs")
-    parser.add_argument("--limit", type=int, default=20, help="Max results to return (default: 20)")
     parser.add_argument("--page", type=int, default=1, help="Result page to fetch (default: 1)")
     parser.add_argument("--cdp", type=int, default=9222, help="CDP port (default: 9222)")
     args = parser.parse_args()
@@ -293,7 +292,7 @@ def main() -> None:
                 sys.exit(f"Error: could not navigate to page {args.page}.")
 
     info = get_page_info(args.cdp)
-    messages = extract_and_scroll(args.cdp, args.limit)
+    messages = extract_and_scroll(args.cdp, 20)
 
     if not messages:
         print("No results found.")
