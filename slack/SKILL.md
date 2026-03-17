@@ -10,13 +10,9 @@ metadata:
 
 # Slack Desktop App Control
 
-Connects to the Slack desktop app via CDP. If Slack isn't running with CDP enabled, it's automatically (re)launched. The workspace is auto-detected — no configuration needed.
-
-All scripts share the same Slack desktop app, so run them sequentially from a single process. Use the scripts below instead of manual `agent-browser` commands. They handle navigation, state recovery, and parsing reliably.
+Connects to the Slack app via CDP (relaunch if not running with CDP). The workspace is auto-detected. Only one command can use this skill at a time. Always use `--json`. Read the raw JSON output directly. Never pipe through formatters or truncate fields (MUST). Always pass hrefs as-is. Never strip or reconstruct them — query parameters are required for Slack to work.
 
 ## Reference formats
-
-Every script that takes a message or channel accepts any of these:
 
 | Format | Example | Resolves to |
 |---|---|---|
@@ -28,48 +24,42 @@ Every script that takes a message or channel accepts any of these:
 
 Channel names must start with `#`, DM names with `@`.
 
-Always pass hrefs as-is. Never strip or reconstruct them — query parameters are required for Slack to work.
-
 ## Common workflows
 
-- **Search → read:** `search.py --json` finds messages (truncated). Pass the `href` to `get.py` to read full content.
-- **Read thread from search:** `search.py "query" --click N --json` clicks the Nth result and returns the full thread (parent + all replies).
-- **Read thread by ref:** `get.py HREF --with-replies --json` returns parent + all replies.
-- **Page results:** `search.py --page 1`, check `pages`, then `--page 2`, etc.
-- **Check unreads:** `unreads.py --json`, then `get.py` per href for full content.
-- **Browse a day:** `collect.py "#channel" YYYY-MM-DD --json` gets message IDs for a date (includes bot messages). Compose with `get.py` to read, `emoji.py` to react, or `--replies` to include reply IDs.
-- **Send/reply:** `reply.py REF "text" --send`. Channel ref → new message, message ref → thread reply.
-- **Saved items:** `later.py --json` reads your Later list.
+- Search → browse results: `search.py "query" --json` returns 20 truncated results per page. Check `pages` in the output, then `--page 2`, etc. Reuses existing results when the query matches. Pass `--click N` + the same flags to open a thread, which returns complete message and replies. Parse the JSON — the data is complete, no need to re-search.
+- Read a message by ref: `get.py HREF --json` reads the full message. Use `--with-replies` to include thread replies.
+- Check unreads: `unreads.py --json` lists unread channels with message previews. Use `get.py` with the href to read full content.
+- Browse a channel by date: `collect.py "#channel" YYYY-MM-DD --json` returns message IDs for that date (includes bot messages). Use `--replies` for reply IDs. Compose with `get.py` to read or `emoji.py` to react.
+- Send a message: `reply.py REF "text" --send`. Channel ref → new message, message ref → thread reply. Default is dry-run.
+- Saved items: `later.py --json` reads your Later list.
 
 ---
 
-### `scripts/unreads.py` — Fetch unread messages
-
-```bash
-python3 <skill-path>/scripts/unreads.py              # pretty-print
-python3 <skill-path>/scripts/unreads.py --json        # structured JSON
-python3 <skill-path>/scripts/unreads.py --channel NAME  # filter by channel
-python3 <skill-path>/scripts/unreads.py --cdp 9333
-```
-
 ### `scripts/search.py` — Search messages
 
-Returns up to 20 results per page with `channel_id`, `message_id`, `thread_id`. Output includes `results` (total count) and `pages` (visible pages). Messages are truncated — use `get.py` with the `href` to read full content.
+Returns up to 20 truncated results per page with `channel_id`, `message_id`, `thread_id`. Use `--click N` to read the full thread of the Nth result.
 
 ```bash
-python3 <skill-path>/scripts/search.py "query"
+python3 <skill-path>/scripts/search.py "query" --json
 python3 <skill-path>/scripts/search.py "in:#channel query" --json
 python3 <skill-path>/scripts/search.py "query" --click 3 --json     # click 3rd result, read full thread
+python3 <skill-path>/scripts/search.py "query" --page 2 --json
 ```
 
-**Pagination:** `--page N` fetches a specific result page. Check the `pages` count from the output before requesting further pages. Repeated calls with the same query reuse the existing results. Slack loads pages dynamically — navigating to the last visible page may reveal more pages. Sometimes a more specific search term is better than paging. But when thoroughness matters, paging through results is important to collect more data.
+`--click` JSON output: `{"clicked": N, "href": "...", "thread": [{"message_id": "...", "message": "..."}]}`. The `thread` array contains complete untruncated messages (parent first, then replies in order).
 
-```bash
-python3 <skill-path>/scripts/search.py "query" --page 2
-python3 <skill-path>/scripts/search.py "query" --page 3
-```
+Pagination: `--page N` fetches a specific result page. Check the `pages` count before requesting further pages. Repeated calls with the same query reuse the existing results. Slack loads pages dynamically — navigating to the last visible page may reveal more pages. Sometimes a more specific search term is better than paging. But when thoroughness matters, paging through results is important to collect more data.
 
 Slack search syntax: `in:#channel`, `from:@user`, `after:YYYY-MM-DD`, `before:YYYY-MM-DD`, `has:reaction`, `has:file`
+
+### `scripts/get.py` — Get message content
+
+```bash
+python3 <skill-path>/scripts/get.py C0123456789/1234567890.123456 --json
+python3 <skill-path>/scripts/get.py "https://…/archives/C…/p…" --json
+python3 <skill-path>/scripts/get.py C0123456789/1234567890.123456 --with-replies --json
+python3 <skill-path>/scripts/get.py C0123456789/111.1 C0123456789/222.2 --json
+```
 
 ### `scripts/reply.py` — Send a message
 
@@ -90,48 +80,30 @@ python3 <skill-path>/scripts/emoji.py C0123456789/1234567890.123456 thumbsup
 python3 <skill-path>/scripts/emoji.py "https://…/archives/C…/p…" fire
 ```
 
-### `scripts/get.py` — Get message content
+### `scripts/unreads.py` — Fetch unread messages
 
 ```bash
-python3 <skill-path>/scripts/get.py C0123456789/1234567890.123456
-python3 <skill-path>/scripts/get.py "https://…/archives/C…/p…" --json
-python3 <skill-path>/scripts/get.py C0123456789/1234567890.123456 --with-replies --json
-python3 <skill-path>/scripts/get.py C0123456789/111.1 C0123456789/222.2  # multiple
+python3 <skill-path>/scripts/unreads.py --json
+python3 <skill-path>/scripts/unreads.py --channel NAME --json
 ```
 
 ### `scripts/later.py` — Fetch "Later" (saved) items
 
 ```bash
-python3 <skill-path>/scripts/later.py                           # all in-progress items
 python3 <skill-path>/scripts/later.py --json
-python3 <skill-path>/scripts/later.py --tab archived
-python3 <skill-path>/scripts/later.py --tab completed
-python3 <skill-path>/scripts/later.py --limit 10
+python3 <skill-path>/scripts/later.py --tab archived --json
+python3 <skill-path>/scripts/later.py --tab completed --json
+python3 <skill-path>/scripts/later.py --limit 10 --json
 ```
 
 ### `scripts/collect.py` — Collect message IDs for a date
 
-Navigates the channel directly (not search), so bot and integration messages are included.
-Returns top-level messages only (not thread replies).
+Navigates the channel directly (not search), so bot and integration messages are included. Returns top-level messages only (not thread replies).
 
 ```bash
-python3 <skill-path>/scripts/collect.py "#general" 2026-03-09
-python3 <skill-path>/scripts/collect.py C042WNMBYQM 2026-03-09 --json
+python3 <skill-path>/scripts/collect.py "#general" 2026-03-09 --json
 python3 <skill-path>/scripts/collect.py "#general" 2026-03-09 --replies --json
-python3 <skill-path>/scripts/collect.py "#general" 2026-03-09 --limit 10
-```
-
-## Processing multiple messages
-
-```bash
-# Collect IDs then read each message:
-python3 <skill-path>/scripts/collect.py "#channel" 2026-03-09 --json | \
-  python3 -c "import json,sys,subprocess; [subprocess.run(['python3','get.py',m['message_id']]) for m in json.load(sys.stdin)]"
-
-# Add emoji to a batch of messages:
-for id in C042.../111 C042.../222; do
-  python3 <skill-path>/scripts/emoji.py "$id" thumbsup
-done
+python3 <skill-path>/scripts/collect.py "#general" 2026-03-09 --limit 10 --json
 ```
 
 ## Manual commands
