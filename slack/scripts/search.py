@@ -289,13 +289,21 @@ def main() -> None:
         _do_search(args.query, args.cdp)
         if args.page > 1:
             if not goto_page(args.cdp, args.page):
-                sys.exit(f"Error: could not navigate to page {args.page}.")
+                msg = f"Error: could not navigate to page {args.page}."
+                if args.as_json:
+                    print(json.dumps({"error": msg, "results": 0, "pages": 0, "messages": []}))
+                else:
+                    print(msg, file=sys.stderr)
+                sys.exit(1)
 
     info = get_page_info(args.cdp)
     messages = extract_and_scroll(args.cdp, 20)
 
     if not messages:
-        print("No results found.")
+        if args.as_json:
+            print(json.dumps({"results": 0, "pages": 0, "messages": []}))
+        else:
+            print("No results found.")
         return
 
     results = info.get("results", 0)

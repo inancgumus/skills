@@ -50,7 +50,7 @@ python3 <skill-path>/scripts/search.py "query"
 python3 <skill-path>/scripts/search.py "in:#channel query" --json
 ```
 
-**Pagination:** `--page N` fetches a specific result page. Repeated calls with the same query reuse the existing results. Slack loads pages dynamically — navigating to the last visible page may reveal more pages. Sometimes a more specific search term is better than paging. But when thoroughness matters, paging through results is important to collect more data.
+**Pagination:** `--page N` fetches a specific result page. Check the `pages` count from the output before requesting further pages. Repeated calls with the same query reuse the existing results. Slack loads pages dynamically — navigating to the last visible page may reveal more pages. Sometimes a more specific search term is better than paging. But when thoroughness matters, paging through results is important to collect more data.
 
 ```bash
 python3 <skill-path>/scripts/search.py "query" --page 2
