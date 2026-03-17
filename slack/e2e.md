@@ -34,7 +34,7 @@ Run `--help` for each script. Verify each shows usage and all documented flags:
 
 - `search.py` — `--json`, `--page`, `--click`, `--cdp`
 - `get.py` — `--json`, `--with-replies`, `--cdp`
-- `collect.py` — `--json`, `--replies`, `--limit`, `--cdp`
+- `collect.py` — `--json`, `--with-replies`, `--limit`, `--cdp`
 - `later.py` — `--json`, `--tab`, `--limit`, `--ids`, `--cdp`
 - `reply.py` — `--send`, `--cdp`
 - `emoji.py` — `--cdp`
@@ -76,7 +76,7 @@ Run each in both JSON and text mode:
 Run each in both JSON and text mode:
 
 - Basic: returns `[{message_id}]` for a date with messages. Text mode lists refs.
-- With replies: `--replies` — each entry has `reply_ids[]`. Text mode shows indented reply refs.
+- With replies: `--with-replies` — each entry has `reply_ids[]`. Text mode shows indented reply refs.
 - Limit: `--limit 3` — at most 3 results
 - Thorough scroll test: pick a date with many messages (10+). Run without `--limit` and verify all messages for that day are collected, not just the first screenful.
 - Empty date: pick a date with no messages — returns `[]`

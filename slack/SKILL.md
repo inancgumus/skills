@@ -29,7 +29,7 @@ Channel names must start with `#`, DM names with `@`.
 - Search → browse results: `search.py "query" --json` returns 20 truncated results per page. Check `pages` in the output, then `--page 2`, etc. Reuses existing results when the query matches. Pass `--click N` + the same flags to open a thread, which returns complete message and replies. Parse the JSON — the data is complete, no need to re-search.
 - Read a message by ref: `get.py HREF --json` reads the full message. Use `--with-replies` to include thread replies.
 - Check unreads: `unreads.py --json` lists unread channels with message previews. Use `get.py` with the href to read full content.
-- Browse a channel by date: `collect.py "#channel" YYYY-MM-DD --json` returns message IDs for that date (includes bot messages). Use `--replies` for reply IDs. Compose with `get.py` to read or `emoji.py` to react.
+- Browse a channel by date: `collect.py "#channel" YYYY-MM-DD --json` returns message IDs for that date (includes bot messages). Use `--with-replies` for reply IDs. Compose with `get.py` to read or `emoji.py` to react.
 - Send a message: `reply.py REF "text" --send`. Channel ref → new message, message ref → thread reply. Default is dry-run.
 - Saved items: `later.py --json` reads your Later list.
 
@@ -102,7 +102,7 @@ Navigates the channel directly (not search), so bot and integration messages are
 
 ```bash
 python3 <skill-path>/scripts/collect.py "#general" 2026-03-09 --json
-python3 <skill-path>/scripts/collect.py "#general" 2026-03-09 --replies --json
+python3 <skill-path>/scripts/collect.py "#general" 2026-03-09 --with-replies --json
 python3 <skill-path>/scripts/collect.py "#general" 2026-03-09 --limit 10 --json
 ```
 

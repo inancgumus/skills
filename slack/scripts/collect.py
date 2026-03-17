@@ -6,7 +6,7 @@ are included. Returns top-level messages only (not thread replies).
 
 Usage:
   python collect.py "#general" 2026-03-09 --json
-  python collect.py "#general" 2026-03-09 --replies --json
+  python collect.py "#general" 2026-03-09 --with-replies --json
   python collect.py "#general" 2026-03-09 --limit 10 --json
   python collect.py "C042WNMBYQM" 2026-03-09 --json
 """
@@ -92,7 +92,7 @@ def main() -> None:
     parser.add_argument("channel", help="Channel name (e.g. '#general') or ID")
     parser.add_argument("date", help="Date in YYYY-MM-DD format")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON")
-    parser.add_argument("--replies", action="store_true", help="Also collect reply IDs for each message")
+    parser.add_argument("--with-replies", action="store_true", dest="with_replies", help="Also collect reply IDs for each message")
     parser.add_argument("--limit", type=int, default=50, help="Max messages (default: 50)")
     parser.add_argument("--cdp", type=int, default=9222, help="CDP port (default: 9222)")
     args = parser.parse_args()
@@ -103,7 +103,7 @@ def main() -> None:
     messages = collect_for_date(channel_id, args.date, args.limit, args.cdp)
 
     replies: dict[str, list[str]] = {}
-    if args.replies and messages:
+    if args.with_replies and messages:
         replies = collect_replies(messages, args.cdp)
 
     if args.as_json:
@@ -111,7 +111,7 @@ def main() -> None:
         for m in messages:
             mid = f"{m['channel_id']}/{m['message_id']}"
             entry: dict = {"message_id": mid}
-            if args.replies:
+            if args.with_replies:
                 r = replies.get(m["message_id"], [])
                 entry["reply_ids"] = [f"{m['channel_id']}/{ts}" for ts in r]
             out.append(entry)
@@ -122,7 +122,7 @@ def main() -> None:
     for m in messages:
         mid = f"{m['channel_id']}/{m['message_id']}"
         print(f"  {mid}")
-        if args.replies:
+        if args.with_replies:
             r = replies.get(m["message_id"], [])
             for rts in r:
                 print(f"    reply: {m['channel_id']}/{rts}")
