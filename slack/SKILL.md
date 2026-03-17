@@ -28,6 +28,8 @@ Every script that takes a message or channel accepts any of these:
 
 Channel names must start with `#`, DM names with `@`.
 
+Always pass hrefs as-is. Never strip or reconstruct them — query parameters are required for Slack to work.
+
 ---
 
 ### `scripts/unreads.py` — Fetch unread messages
