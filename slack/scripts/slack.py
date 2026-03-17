@@ -216,11 +216,20 @@ def _open_search_bar(cdp: int) -> str | None:
     if input_ref:
         return input_ref
 
-    search_ref = find_ref(snapshot, r'button "Search"') or find_ref(snapshot, r'button "Clear')
+    search_ref = find_ref(snapshot, r'button "Search')
     if not search_ref:
         return None
     ab("click", f"@{search_ref}", cdp=cdp)
-    ref, _ = wait_for_ref(r'combobox', cdp=cdp, timeout=5)
+    ref, _ = wait_for_ref(r'combobox', cdp=cdp, timeout=3)
+    if ref:
+        return ref
+
+    # "Search: <query>" opens results view, not combobox — dismiss and retry
+    ab("press", "Escape", cdp=cdp)
+    ref, _ = wait_for_ref(r'button "Search', cdp=cdp, timeout=3)
+    if ref:
+        ab("click", f"@{ref}", cdp=cdp)
+        ref, _ = wait_for_ref(r'combobox', cdp=cdp, timeout=5)
     return ref
 
 
@@ -330,6 +339,11 @@ def resolve_ref(ref: str, cdp: int = 9222) -> tuple[str, str]:
     # Bare channel ID
     if ref.startswith("C") and len(ref) >= 9:
         return (ref, "")
+
+    # Bare channel name — try with # prefix
+    cid = _resolve_channel_name(ref, cdp)
+    if cid:
+        return (cid, "")
 
     sys.exit(f"Error: '{ref}' is not a valid reference. Channel names must start with #.")
 
@@ -657,6 +671,8 @@ def open_thread(msg_ts: str, cdp: int = 9222) -> bool:
         return False
 
     wait_for("""document.querySelector('.p-flexpane, [data-qa="thread_view"]') ? 'ok' : null""", cdp=cdp, timeout=5)
+    # Wait for messages to load inside the panel before returning
+    wait_for("""document.querySelector('.p-flexpane [data-qa="message_container"], [data-qa="thread_view"] [data-qa="message_container"]') ? 'ok' : null""", cdp=cdp, timeout=5)
     return True
 
 
@@ -1037,6 +1053,15 @@ def execute_search(query: str, cdp: int = 9222) -> None:
     query_ref = _open_search_bar(cdp)
     if not query_ref:
         sys.exit("Error: could not find the search input.")
+
+    # Slack's combobox ignores `fill`'s clear — click the Clear button if present
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+    clear_ref = find_ref(snapshot, r'button "Clear"')
+    if clear_ref:
+        ab("click", f"@{clear_ref}", cdp=cdp)
+        ref, _ = wait_for_ref(r'combobox', cdp=cdp, timeout=3)
+        if ref:
+            query_ref = ref
 
     ab("fill", f"@{query_ref}", query, cdp=cdp)
     _, snapshot = wait_for_ref(r'option "Search for:', cdp=cdp, timeout=5)

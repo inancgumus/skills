@@ -4,9 +4,11 @@ Validates all slack skill script functionality. An agent runs these tests sequen
 
 All commands run from `slack/scripts/`.
 
-## Output mode rule
+## Hard rules
 
-Every script that supports `--json` must be tested in **both modes**. Run the command with `--json` first, then without. The agent verifies that text output contains the same data as JSON (same messages, same counts, same fields) in a human-readable format.
+1. **No skipping.** Every test in every section MUST be executed. If a test is blocked by a bug, report the bug, fix it, and retest — do not skip or mark as "blocked".
+2. **Fix bugs immediately.** When a test fails, diagnose the root cause, fix the code, and rerun the failing test until it passes. Repeat until all tests pass. No shortcuts.
+3. **Both output modes.** Every script that supports `--json` must be tested in **both modes** — JSON first, then text. Verify text output contains the same data as JSON in a human-readable format.
 
 ## Setup
 
