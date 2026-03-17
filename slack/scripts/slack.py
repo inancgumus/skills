@@ -110,11 +110,8 @@ def ensure_slack_cdp(cdp: int = 9222) -> None:
     cmd = launch_slack_with_cdp(cdp)
     print(json.dumps({"status": "launching_slack", "command": cmd}), file=sys.stderr)
     subprocess.run(cmd, shell=True, capture_output=True, timeout=15)
-
-    for _ in range(15):
-        time.sleep(2)
-        if check_cdp_connection(cdp):
-            return
+    if wait_for('window.location.href.includes("slack") ? "ok" : null', cdp=cdp, timeout=30):
+        return
 
     print(json.dumps({
         "error": "cannot_connect",
@@ -149,44 +146,36 @@ def find_all_refs(snapshot: str, label_pattern: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Workspace detection
+# Polling primitives
 # ---------------------------------------------------------------------------
 
-cached_workspace_domain: str | None = None
+def wait_for(js: str, *, cdp: int = 9222, timeout: float = 10):
+    """Poll until JS expression returns a truthy value. No sleep — ab_eval call latency throttles naturally."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            raw = ab_eval(js, cdp=cdp)
+            val = decode_ab_json(raw)
+            if val and val != "null":
+                return val
+        except (RuntimeError, subprocess.TimeoutExpired):
+            pass
+    return None
 
 
-def getcached_workspace_domain(cdp: int = 9222) -> str:
-    """Auto-detect the Slack workspace domain from the running app.
-
-    Queries the DOM for workspace-specific links (e.g. *.slack.com) and caches
-    the result for the lifetime of the process.
-    """
-    global cached_workspace_domain
-    if cached_workspace_domain:
-        return cached_workspace_domain
-
-    raw = ab_eval(r"""
-(() => {
-    const links = document.querySelectorAll('a[href*=".slack.com"]');
-    for (const a of links) {
-        const m = a.href.match(/https:\/\/([^.]+\.slack\.com)/);
-        if (m) return m[1];
-    }
-    const meta = document.querySelector('meta[name="team-domain"]');
-    if (meta) return meta.content + '.slack.com';
-    return null;
-})()
-""", cdp=cdp)
-
-    domain = decode_ab_json(raw)
-    if domain and isinstance(domain, str) and ".slack.com" in domain:
-        cached_workspace_domain = domain
-        return domain
-
-    raise RuntimeError(
-        "Could not auto-detect Slack workspace domain. "
-        "Make sure the Slack desktop app is running and connected via CDP."
-    )
+def wait_for_ref(pattern: str, *, cdp: int = 9222, timeout: float = 10) -> tuple[str | None, str]:
+    """Poll snapshots until ref pattern matches. Returns (ref, snapshot)."""
+    deadline = time.monotonic() + timeout
+    snapshot = ""
+    while time.monotonic() < deadline:
+        try:
+            snapshot = ab("snapshot", "-i", cdp=cdp)
+            ref = find_ref(snapshot, pattern)
+            if ref:
+                return ref, snapshot
+        except (RuntimeError, subprocess.TimeoutExpired):
+            pass
+    return None, snapshot
 
 
 # ---------------------------------------------------------------------------
@@ -210,9 +199,8 @@ def ensure_clean_state(cdp: int) -> str:
             home_ref = find_ref(snapshot, r'tab "Home"')
             if home_ref:
                 ab("click", f"@{home_ref}", cdp=cdp)
-        time.sleep(1)
-        snapshot = ab("snapshot", "-i", cdp=cdp)
-        if find_ref(snapshot, r'button "New message"'):
+        ref, snapshot = wait_for_ref(r'button "New message"', cdp=cdp, timeout=5)
+        if ref:
             return snapshot
 
     return snapshot  # best effort
@@ -232,9 +220,8 @@ def _open_search_bar(cdp: int) -> str | None:
     if not search_ref:
         return None
     ab("click", f"@{search_ref}", cdp=cdp)
-    time.sleep(1)
-    snapshot = ab("snapshot", "-i", cdp=cdp)
-    return find_ref(snapshot, r'combobox')
+    ref, _ = wait_for_ref(r'combobox', cdp=cdp, timeout=5)
+    return ref
 
 
 def navigate_to(target: str, cdp: int) -> bool:
@@ -244,23 +231,21 @@ def navigate_to(target: str, cdp: int) -> bool:
     option from the dropdown (i.e. the channel/DM/view, not "Search for: …").
     """
     ab("press", "Escape", cdp=cdp)
-    time.sleep(0.3)
 
     input_ref = _open_search_bar(cdp)
     if not input_ref:
         return False
 
     ab("fill", f"@{input_ref}", target, cdp=cdp)
-    time.sleep(1)
+    _, snapshot = wait_for_ref(r'option', cdp=cdp, timeout=5)
 
-    snapshot = ab("snapshot", "-i", cdp=cdp)
     # Pick the first channel/DM option, skipping "Search for:" options
     for line in snapshot.splitlines():
         if re.search(r'option', line, re.IGNORECASE) and 'Search for:' not in line:
             m = re.search(r'\bref=(e\d+)', line)
             if m:
                 ab("click", f"@{m.group(1)}", cdp=cdp)
-                time.sleep(1)
+                wait_for(f"""document.querySelector('{DOM["MESSAGE_PANE"]}') ? 'ok' : null""", cdp=cdp, timeout=5)
                 return True
     return False
 
@@ -320,7 +305,7 @@ def resolve_ref(ref: str, cdp: int = 9222) -> tuple[str, str]:
     if ref.startswith("@"):
         name = ref[1:]
         navigate_to(name, cdp)
-        time.sleep(1)
+        wait_for(r"""(() => { const h = window.location.href; return /\/[A-Z][A-Z0-9]{7,}/.test(h) ? h : null; })()""", cdp=cdp, timeout=5)
         url = ab_eval("window.location.href", cdp=cdp)
         m = re.search(r'/([A-Z][A-Z0-9]{7,})', url)
         if m:
@@ -430,6 +415,10 @@ def go_to_channel(name_or_id: str, cdp: int = 9222) -> bool:
 
     Skips navigation if already on the target channel.
     """
+    # Normalize bare channel names to #name format
+    if not name_or_id.startswith(('#', '@')) and not re.match(r'^[A-Z][A-Z0-9]{8,}$', name_or_id):
+        name_or_id = f"#{name_or_id}"
+
     # Check if already on this channel
     current = ab_eval("window.location.href", cdp=cdp)
     if name_or_id in current:
@@ -444,18 +433,19 @@ def go_to_channel(name_or_id: str, cdp: int = 9222) -> bool:
             return 'not_found';
         }})()""", cdp=cdp)
         if "ok" in found:
-            time.sleep(1)
+            wait_for(f'window.location.href.includes("{name_or_id}") ? "ok" : null', cdp=cdp, timeout=5)
             return True
 
     # Try sidebar by name
+    search_name = name_or_id.lstrip('#')
     found = ab_eval(f"""(() => {{
         const item = [...document.querySelectorAll('[role="treeitem"]')]
-            .find(el => el.textContent?.includes('{name_or_id}'));
+            .find(el => el.textContent?.includes('{search_name}'));
         if (item) {{ item.click(); return 'ok'; }}
         return 'not_found';
     }})()""", cdp=cdp)
     if "ok" in found:
-        time.sleep(1)
+        wait_for(f"""document.querySelector('{DOM["MESSAGE_PANE"]}') ? 'ok' : null""", cdp=cdp, timeout=5)
         return True
 
     # Fall back to search bar
@@ -473,7 +463,6 @@ def jump_to_date(year: int, month: int, day: int, cdp: int = 9222) -> bool:
     # Dismiss overlays
     for _ in range(3):
         ab("press", "Escape", cdp=cdp)
-    time.sleep(0.3)
 
     # Open date picker menu, click last item ("Jump to a specific date")
     raw = ab_eval(f"""(async () => {{
@@ -489,7 +478,7 @@ def jump_to_date(year: int, month: int, day: int, cdp: int = 9222) -> bool:
     }})()""", cdp=cdp)
     if "no_button" in raw or "no_menu" in raw:
         return False
-    time.sleep(0.5)
+    wait_for(f"""document.querySelector("{DOM['CAL']}") ? 'ok' : null""", cdp=cdp, timeout=5)
 
     # Navigate calendar year/month, then click the day
     ab_eval(f"""(async () => {{
@@ -517,7 +506,7 @@ def jump_to_date(year: int, month: int, day: int, cdp: int = 9222) -> bool:
         const dayBtn = document.querySelector('[data-qa-date="{date_str}"]');
         if (dayBtn) dayBtn.click();
     }})()""", cdp=cdp)
-    time.sleep(1.5)
+    wait_for(f"""document.querySelector('{DOM["MESSAGE"]}') ? 'ok' : null""", cdp=cdp, timeout=10)
     return True
 
 
@@ -556,7 +545,6 @@ def scroll_to_message(msg_ts: str, cdp: int = 9222) -> bool:
         return "not_found" not in raw
 
     if find_in_dom():
-        time.sleep(0.5)
         return True
 
     # Message not in current viewport — ensure we're in channel view, then jump to date
@@ -565,7 +553,6 @@ def scroll_to_message(msg_ts: str, cdp: int = 9222) -> bool:
     if not jump_to_date(dt.year, dt.month, dt.day, cdp):
         return False
     if find_in_dom():
-        time.sleep(0.5)
         return True
 
     return False
@@ -623,7 +610,7 @@ def add_emoji(msg_ts: str, emoji: str, cdp: int = 9222) -> bool:
 
     # Hover timestamp to reveal toolbar
     ab("hover", f"@{ts_ref}", cdp=cdp)
-    time.sleep(0.3)
+    wait_for("""document.querySelector('[aria-label*="Add reaction"]') ? 'ok' : null""", cdp=cdp, timeout=5)
 
     # Find "Add reaction" after the timestamp ref
     snapshot = ab("snapshot", "-i", cdp=cdp)
@@ -633,17 +620,14 @@ def add_emoji(msg_ts: str, emoji: str, cdp: int = 9222) -> bool:
 
     # Open emoji picker, search, select
     ab("click", f"@{add_ref}", cdp=cdp)
-    time.sleep(0.8)
-    snapshot = ab("snapshot", "-i", cdp=cdp)
-    search_ref = find_ref(snapshot, r'(textbox|combobox).*(search|find|emoji)')
+    search_ref, snapshot = wait_for_ref(r'(textbox|combobox).*(search|find|emoji)', cdp=cdp, timeout=5)
     if not search_ref:
         search_ref = find_ref(snapshot, r'(textbox|combobox)')
     if not search_ref:
         return False
     ab("fill", f"@{search_ref}", emoji, cdp=cdp)
-    time.sleep(0.8)
+    wait_for_ref(r'(option|button|img)', cdp=cdp, timeout=5)
     ab("press", "Enter", cdp=cdp)
-    time.sleep(0.3)
     return True
 
 
@@ -672,7 +656,7 @@ def open_thread(msg_ts: str, cdp: int = 9222) -> bool:
     if result != "clicked":
         return False
 
-    time.sleep(1)
+    wait_for("""document.querySelector('.p-flexpane, [data-qa="thread_view"]') ? 'ok' : null""", cdp=cdp, timeout=5)
     return True
 
 
@@ -682,7 +666,7 @@ def close_thread(cdp: int = 9222) -> None:
     close_ref = find_ref(snapshot, r'button "Close"')
     if close_ref:
         ab("click", f"@{close_ref}", cdp=cdp)
-        time.sleep(0.5)
+        wait_for("""!document.querySelector('.p-flexpane, [data-qa="thread_view"]') ? 'ok' : null""", cdp=cdp, timeout=5)
 
 
 def get_thread_reply_ids(cdp: int = 9222) -> list[str]:
@@ -804,7 +788,7 @@ def read_reaction_users(reactions: list[dict], cdp: int) -> list[dict]:
         if idx >= len(refs):
             continue
         ab("hover", f"@{refs[idx]}", cdp=cdp)
-        time.sleep(0.3)
+        wait_for("""document.querySelector('[class*="c-reaction__tip"]') ? 'ok' : null""", cdp=cdp, timeout=5)
         raw = ab_eval("""(() => {
             const tip = document.querySelector('[class*="c-reaction__tip"]');
             return tip ? JSON.stringify(tip.textContent.trim()) : 'null';
@@ -900,7 +884,6 @@ def read_thread_messages(cdp: int = 9222) -> dict[str, str]:
             if len(msgs) == before:
                 break
             ab_eval(scroll_js, cdp=cdp)
-            time.sleep(0.5)
         return msgs
 
     # Scroll up first to reach the beginning, then down to the end
@@ -926,7 +909,6 @@ def reply_in_thread(msg_ts: str, text: str, cdp: int = 9222) -> bool:
         return False
 
     ab("fill", f"@{reply_box}", text, cdp=cdp)
-    time.sleep(0.5)
 
     snapshot = ab("snapshot", "-i", cdp=cdp)
     send_ref = find_ref_after(snapshot, reply_box, r'button "Send now"')
@@ -936,7 +918,7 @@ def reply_in_thread(msg_ts: str, text: str, cdp: int = 9222) -> bool:
     if not send_ref:
         return False
     ab("click", f"@{send_ref}", cdp=cdp)
-    time.sleep(1)
+    wait_for("""!document.querySelector('.p-flexpane [data-qa="msg_input"]')?.value ? 'ok' : null""", cdp=cdp, timeout=5)
 
     close_thread(cdp)
     return True
@@ -1057,14 +1039,13 @@ def execute_search(query: str, cdp: int = 9222) -> None:
         sys.exit("Error: could not find the search input.")
 
     ab("fill", f"@{query_ref}", query, cdp=cdp)
-    time.sleep(1)
-    snapshot = ab("snapshot", "-i", cdp=cdp)
+    _, snapshot = wait_for_ref(r'option "Search for:', cdp=cdp, timeout=5)
 
     search_option = find_ref(snapshot, r'option "Search for:')
     if not search_option:
         sys.exit("Error: 'Search for:' option not found in dropdown.")
     ab("click", f"@{search_option}", cdp=cdp)
-    time.sleep(3)
+    wait_for("""document.querySelector('[data-qa="search_result"]') ? 'ok' : null""", cdp=cdp, timeout=10)
 
 
 def goto_search_page(page: int, cdp: int = 9222) -> bool:
@@ -1087,7 +1068,7 @@ def goto_search_page(page: int, cdp: int = 9222) -> bool:
             return '"not_visible"';
         }})()"""
         if decode_ab_json(ab_eval(js, cdp=cdp)) == "clicked":
-            time.sleep(3)
+            wait_for("""document.querySelector('[data-qa="search_result"]') ? 'ok' : null""", cdp=cdp, timeout=10)
             return True
 
         current = _current()
@@ -1106,7 +1087,7 @@ def goto_search_page(page: int, cdp: int = 9222) -> bool:
         }})()"""
         if decode_ab_json(ab_eval(js, cdp=cdp)) == "blocked":
             return False
-        time.sleep(3)
+        wait_for("""document.querySelector('[data-qa="search_result"]') ? 'ok' : null""", cdp=cdp, timeout=10)
 
     return False
 
@@ -1152,7 +1133,6 @@ def scroll_search_down(cdp: int = 9222) -> dict:
 def scroll_search_to_top(cdp: int = 9222) -> None:
     """Scroll search results to the top."""
     ab_eval(_SEARCH_SCROLL_TOP_JS, cdp=cdp)
-    time.sleep(0.5)
 
 
 def click_search_result_link(n: int, cdp: int = 9222) -> None:
@@ -1166,7 +1146,7 @@ def click_search_result_link(n: int, cdp: int = 9222) -> None:
         return '"no_link"';
     }})()"""
     ab_eval(js, cdp=cdp)
-    time.sleep(2)
+    wait_for(f"""document.querySelector('{DOM["MESSAGE_PANE"]}') || document.querySelector('.p-flexpane') ? 'ok' : null""", cdp=cdp, timeout=10)
 
 
 # ---------------------------------------------------------------------------
@@ -1193,7 +1173,6 @@ def scroll_channel_down(cdp: int = 9222) -> None:
         return true;
     }})()"""
     ab_eval(js, cdp=cdp)
-    time.sleep(0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -1206,19 +1185,7 @@ def send_channel_message(target: str, text: str, cdp: int = 9222) -> bool:
     if not navigate_to(target, cdp):
         return False
 
-    def _find_msg_box() -> str | None:
-        snapshot = ab("snapshot", "-i", cdp=cdp)
-        for line in snapshot.splitlines():
-            if re.search(r'textbox "Message', line, re.IGNORECASE):
-                m = re.search(r'\[ref=(e\d+)\]', line)
-                if m:
-                    return m.group(1)
-        return None
-
-    msg_ref = _find_msg_box()
-    if not msg_ref:
-        time.sleep(1)
-        msg_ref = _find_msg_box()
+    msg_ref, _ = wait_for_ref(r'textbox "Message', cdp=cdp, timeout=5)
     if not msg_ref:
         return False
 
@@ -1230,9 +1197,7 @@ def send_channel_message(target: str, text: str, cdp: int = 9222) -> bool:
         ab("click", f"@{send_ref}", cdp=cdp)
     else:
         ab("click", f"@{msg_ref}", cdp=cdp)
-        time.sleep(0.3)
         ab("press", "Enter", cdp=cdp)
-    time.sleep(1)
     return True
 
 
@@ -1249,14 +1214,12 @@ def go_to_unreads(cdp: int = 9222) -> bool:
         more_ref = find_ref(snapshot, r'button "More unreads"')
         if more_ref:
             ab("click", f"@{more_ref}", cdp=cdp)
-            time.sleep(1)
-            snapshot = ab("snapshot", "-i", cdp=cdp)
-            ref = find_ref(snapshot, r'treeitem "Unreads')
+            ref, snapshot = wait_for_ref(r'treeitem "Unreads', cdp=cdp, timeout=5)
 
     if not ref:
         return False
     ab("click", f"@{ref}", cdp=cdp)
-    time.sleep(2)
+    wait_for("""document.querySelector('.p-unreads_view, [data-qa="unreads_view"]') ? 'ok' : null""", cdp=cdp, timeout=5)
     return True
 
 
@@ -1365,7 +1328,7 @@ def go_to_later(tab: str = "in-progress", cdp: int = 9222) -> bool:
         return False
 
     ab("click", f"@{later_ref}", cdp=cdp)
-    time.sleep(2)
+    wait_for("""document.querySelector('[data-qa="virtual-list-item"]') ? 'ok' : null""", cdp=cdp, timeout=5)
 
     if tab != "in-progress":
         snapshot = ab("snapshot", "-i", cdp=cdp)
@@ -1373,7 +1336,7 @@ def go_to_later(tab: str = "in-progress", cdp: int = 9222) -> bool:
         tab_ref = find_ref(snapshot, rf'tab "{tab_label}')
         if tab_ref:
             ab("click", f"@{tab_ref}", cdp=cdp)
-            time.sleep(1)
+            wait_for("""document.querySelector('[data-qa="virtual-list-item"]') ? 'ok' : null""", cdp=cdp, timeout=5)
     return True
 
 
@@ -1409,7 +1372,6 @@ def scroll_later_to_top(cdp: int = 9222) -> None:
             el = el.parentElement;
         }
     })()""", cdp=cdp)
-    time.sleep(0.5)
 
 
 def scroll_later_down(cdp: int = 9222) -> None:
@@ -1426,4 +1388,3 @@ def scroll_later_down(cdp: int = 9222) -> None:
             el = el.parentElement;
         }
     })()""", cdp=cdp)
-    time.sleep(0.5)
