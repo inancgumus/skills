@@ -1,8 +1,7 @@
-"""Shared helpers for Slack CDP automation scripts.
-
-All scripts in this directory use agent-browser to control the Slack desktop
-app via Chrome DevTools Protocol (CDP). This module holds the common utilities
-so fixes and improvements only need to happen in one place.
+"""All Slack-specific functionality lives here: CDP, agent-browser, DOM, selectors,
+snapshots, navigation, parsing. Scripts are pure workflow — they call these
+primitives and never import or use any Slack-specific internals.
+New Slack capability? Add a primitive here. New workflow? Add a script.
 """
 
 from __future__ import annotations
@@ -219,21 +218,35 @@ def ensure_clean_state(cdp: int) -> str:
     return snapshot  # best effort
 
 
-def navigate_to(target: str, cdp: int) -> bool:
-    """Navigate to a channel, DM, or Slack view by name via the search bar."""
-    snapshot = ab("snapshot", "-i", cdp=cdp)
+def _open_search_bar(cdp: int) -> str | None:
+    """Open the Slack search bar and return the combobox ref.
 
-    # If the search combobox is already open, use it directly
-    input_ref = find_ref(snapshot, r'combobox.*Query')
-    if not input_ref:
-        # Open search — button may be "Search" or "Clear search" (when already active)
-        search_ref = find_ref(snapshot, r'button "Search"') or find_ref(snapshot, r'button "Clear')
-        if not search_ref:
-            return False
-        ab("click", f"@{search_ref}", cdp=cdp)
-        time.sleep(1)
-        snapshot = ab("snapshot", "-i", cdp=cdp)
-        input_ref = find_ref(snapshot, r'combobox.*Query')
+    Handles both fresh open (via Search button) and already-open states.
+    """
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+    input_ref = find_ref(snapshot, r'combobox')
+    if input_ref:
+        return input_ref
+
+    search_ref = find_ref(snapshot, r'button "Search"') or find_ref(snapshot, r'button "Clear')
+    if not search_ref:
+        return None
+    ab("click", f"@{search_ref}", cdp=cdp)
+    time.sleep(1)
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+    return find_ref(snapshot, r'combobox')
+
+
+def navigate_to(target: str, cdp: int) -> bool:
+    """Navigate to a channel, DM, or view via the Slack search bar.
+
+    Opens the search bar, types the target, and picks the first non-search
+    option from the dropdown (i.e. the channel/DM/view, not "Search for: …").
+    """
+    ab("press", "Escape", cdp=cdp)
+    time.sleep(0.3)
+
+    input_ref = _open_search_bar(cdp)
     if not input_ref:
         return False
 
@@ -241,14 +254,15 @@ def navigate_to(target: str, cdp: int) -> bool:
     time.sleep(1)
 
     snapshot = ab("snapshot", "-i", cdp=cdp)
-    option_ref = find_ref(snapshot, r'option')
-    if option_ref:
-        ab("click", f"@{option_ref}", cdp=cdp)
-    else:
-        ab("press", "Enter", cdp=cdp)
-
-    time.sleep(1)
-    return True
+    # Pick the first channel/DM option, skipping "Search for:" options
+    for line in snapshot.splitlines():
+        if re.search(r'option', line, re.IGNORECASE) and 'Search for:' not in line:
+            m = re.search(r'\bref=(e\d+)', line)
+            if m:
+                ab("click", f"@{m.group(1)}", cdp=cdp)
+                time.sleep(1)
+                return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -256,8 +270,9 @@ def navigate_to(target: str, cdp: int) -> bool:
 # ---------------------------------------------------------------------------
 
 def _resolve_channel_name(name: str, cdp: int) -> str:
-    """Look up a channel ID by name from the sidebar. Falls back to navigating to it."""
-    # Try sidebar first
+    """Look up a channel ID by name from the sidebar, or navigate and read from URL."""
+    ensure_clean_state(cdp)
+    # Try sidebar first (fast path)
     raw = ab_eval(f"""(() => {{
         const items = [...document.querySelectorAll('[data-qa-channel-sidebar-channel-id]')];
         const match = items.find(el => {{
@@ -269,19 +284,12 @@ def _resolve_channel_name(name: str, cdp: int) -> str:
     cid = decode_ab_json(raw)
     if isinstance(cid, str):
         return cid
-    # Fallback: navigate to channel so it appears in sidebar, then retry
-    navigate_to(name, cdp)
-    time.sleep(1)
-    raw = ab_eval(f"""(() => {{
-        const items = [...document.querySelectorAll('[data-qa-channel-sidebar-channel-id]')];
-        const match = items.find(el => {{
-            const n = el.querySelector('[data-qa="channel_sidebar_name"]') || el;
-            return n.textContent.trim().toLowerCase() === '{name.lower()}';
-        }});
-        return match ? JSON.stringify(match.getAttribute('data-qa-channel-sidebar-channel-id')) : 'null';
-    }})()""", cdp=cdp)
-    cid = decode_ab_json(raw)
-    return cid if isinstance(cid, str) else ""
+    # Fallback: navigate to channel and extract ID from URL
+    if not navigate_to(name, cdp):
+        return ""
+    url = ab_eval("window.location.href", cdp=cdp)
+    m = re.search(r'/([A-Z][A-Z0-9]{7,})', url)
+    return m.group(1) if m else ""
 
 
 def resolve_ref(ref: str, cdp: int = 9222) -> tuple[str, str]:
@@ -932,3 +940,490 @@ def reply_in_thread(msg_ts: str, text: str, cdp: int = 9222) -> bool:
 
     close_thread(cdp)
     return True
+
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
+def ts_to_iso(ts: str) -> str:
+    """Convert a Slack message timestamp to ISO 8601 UTC string."""
+    dt = datetime.datetime.fromtimestamp(float(ts.split(".")[0]), datetime.timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ---------------------------------------------------------------------------
+# Search primitives
+# ---------------------------------------------------------------------------
+
+_SEARCH_EXTRACT_JS = r"""
+(() => {
+    const items = document.querySelectorAll('[data-qa="search_result"]');
+    const results = [];
+    for (const item of items) {
+        const userEl = item.querySelector('[data-qa="message_sender_name"]');
+        const user = userEl ? userEl.textContent.trim() : '';
+        const tsEl = item.querySelector('[data-qa="timestamp_label"]');
+        const timeText = tsEl ? tsEl.textContent.trim() : '';
+        const archiveLink = item.querySelector('a[href*="/archives/"]');
+        const href = archiveLink ? archiveLink.href : '';
+        const msgEl = item.querySelector('[data-qa="message-text"]');
+        const message = msgEl ? msgEl.innerText.trim() : '';
+        results.push({user, time: timeText, href, message});
+    }
+    return JSON.stringify(results);
+})()
+"""
+
+_SEARCH_SCROLL_JS = r"""
+(() => {
+    const result = document.querySelector('[data-qa="search_result"]');
+    if (!result) return '"no_results"';
+    let el = result.closest('.c-virtual_list__scroll_container');
+    if (!el) el = result.parentElement;
+    let scroller = el;
+    while (scroller) {
+        if (scroller.scrollHeight > scroller.clientHeight + 10) {
+            const before = scroller.scrollTop;
+            scroller.scrollTop += Math.floor(scroller.clientHeight / 2);
+            const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 5;
+            return JSON.stringify({scrolled: scroller.scrollTop > before, atBottom});
+        }
+        scroller = scroller.parentElement;
+    }
+    return '"no_scroller"';
+})()
+"""
+
+_SEARCH_SCROLL_TOP_JS = r"""
+(() => {
+    const result = document.querySelector('[data-qa="search_result"]');
+    if (!result) return;
+    let el = result.closest('.c-virtual_list__scroll_container');
+    if (!el) el = result.parentElement;
+    let scroller = el;
+    while (scroller) {
+        if (scroller.scrollHeight > scroller.clientHeight + 10) {
+            scroller.scrollTop = 0;
+            return;
+        }
+        scroller = scroller.parentElement;
+    }
+})()
+"""
+
+_SEARCH_PAGE_INFO_JS = r"""
+(() => {
+    let results = 0;
+    const rc = document.querySelector('[class*="resultCounts"]');
+    if (rc) {
+        const m = rc.textContent.match(/([\d,]+)\s*results?/i);
+        if (m) results = parseInt(m[1].replace(/,/g, ''));
+    }
+    let pages = 0;
+    const btns = document.querySelectorAll('[data-qa*="pagination_page_btn"]');
+    btns.forEach(b => { const n = parseInt(b.textContent); if (n > pages) pages = n; });
+    return JSON.stringify({results, pages});
+})()
+"""
+
+
+def get_search_state(cdp: int = 9222) -> tuple[str, int]:
+    """Return (query, current_page) if Slack is showing search results, else ('', 0)."""
+    js = r"""(() => {
+        const btns = [...document.querySelectorAll('button')];
+        const sb = btns.find(b => /^Search:\s/.test(b.textContent.trim()));
+        if (!sb) return JSON.stringify({q: '', p: 0});
+        const q = sb.textContent.trim().replace(/^Search:\s*/, '');
+        if (!document.querySelectorAll('[data-qa="search_result"]').length)
+            return JSON.stringify({q: '', p: 0});
+        const active = document.querySelector('[data-qa*="pagination_page_btn"][aria-current="page"]');
+        const p = active ? parseInt(active.textContent.trim()) : 1;
+        return JSON.stringify({q, p});
+    })()"""
+    raw = ab_eval(js, cdp=cdp)
+    state = decode_ab_json(raw)
+    if not isinstance(state, dict):
+        return ("", 0)
+    return (state.get("q", ""), state.get("p", 0))
+
+
+def execute_search(query: str, cdp: int = 9222) -> None:
+    """Open search bar, type query, click 'Search for:' option to trigger message search."""
+    ensure_clean_state(cdp)
+
+    query_ref = _open_search_bar(cdp)
+    if not query_ref:
+        sys.exit("Error: could not find the search input.")
+
+    ab("fill", f"@{query_ref}", query, cdp=cdp)
+    time.sleep(1)
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+
+    search_option = find_ref(snapshot, r'option "Search for:')
+    if not search_option:
+        sys.exit("Error: 'Search for:' option not found in dropdown.")
+    ab("click", f"@{search_option}", cdp=cdp)
+    time.sleep(3)
+
+
+def goto_search_page(page: int, cdp: int = 9222) -> bool:
+    """Navigate to a specific search results pagination page."""
+    def _current() -> int:
+        js = r"""(() => {
+            const active = document.querySelector('[data-qa*="pagination_page_btn"][aria-current="page"]');
+            return active ? active.textContent.trim() : '0';
+        })()"""
+        raw = ab_eval(js, cdp=cdp).strip().strip('"').strip("'")
+        try:
+            return int(raw)
+        except ValueError:
+            return 0
+
+    for _ in range(15):
+        js = f"""(() => {{
+            const btn = document.querySelector('[data-qa="c-pagination_page_btn_{page}"]');
+            if (btn) {{ btn.click(); return '"clicked"'; }}
+            return '"not_visible"';
+        }})()"""
+        if decode_ab_json(ab_eval(js, cdp=cdp)) == "clicked":
+            time.sleep(3)
+            return True
+
+        current = _current()
+        if current == page:
+            return True
+        if current == 0:
+            return False
+
+        btn_qa = "c-pagination_forward_btn" if page > current else "c-pagination_back_btn"
+        js = f"""(() => {{
+            const btn = document.querySelector('[data-qa="{btn_qa}"]');
+            if (btn && !btn.classList.contains('c-button--disabled')) {{
+                btn.click(); return '"ok"';
+            }}
+            return '"blocked"';
+        }})()"""
+        if decode_ab_json(ab_eval(js, cdp=cdp)) == "blocked":
+            return False
+        time.sleep(3)
+
+    return False
+
+
+def get_search_page_info(cdp: int = 9222) -> dict:
+    """Return {results: int, pages: int} for the current search."""
+    raw = ab_eval(_SEARCH_PAGE_INFO_JS, cdp=cdp)
+    info = decode_ab_json(raw)
+    if isinstance(info, str):
+        info = decode_ab_json(info)
+    if not isinstance(info, dict):
+        return {"results": 0, "pages": 0}
+    return info
+
+
+def extract_visible_search_results(cdp: int = 9222) -> list[dict]:
+    """Read currently visible search results from the DOM.
+
+    Returns list of {user, time, href, message, channel_id, message_id, thread_id}.
+    """
+    raw = ab_eval(_SEARCH_EXTRACT_JS, cdp=cdp)
+    batch = decode_ab_json(raw)
+    if isinstance(batch, str):
+        batch = decode_ab_json(batch)
+    if not isinstance(batch, list):
+        return []
+    for r in batch:
+        href = r.get("href", "")
+        if href:
+            r.update(parse_slack_url(href))
+    return batch
+
+
+def scroll_search_down(cdp: int = 9222) -> dict:
+    """Scroll the search results list down. Returns {scrolled: bool, atBottom: bool}."""
+    raw = ab_eval(_SEARCH_SCROLL_JS, cdp=cdp)
+    result = decode_ab_json(raw)
+    if isinstance(result, dict):
+        return result
+    return {"scrolled": False, "atBottom": True}
+
+
+def scroll_search_to_top(cdp: int = 9222) -> None:
+    """Scroll search results to the top."""
+    ab_eval(_SEARCH_SCROLL_TOP_JS, cdp=cdp)
+    time.sleep(0.5)
+
+
+def click_search_result_link(n: int, cdp: int = 9222) -> None:
+    """Click the Nth search result's archive link (1-based). Opens the message."""
+    js = f"""(() => {{
+        const items = document.querySelectorAll('[data-qa="search_result"]');
+        const item = items[{n - 1}];
+        if (!item) return '"not_found"';
+        const link = item.querySelector('a[href*="/archives/"]');
+        if (link) {{ link.click(); return '"clicked"'; }}
+        return '"no_link"';
+    }})()"""
+    ab_eval(js, cdp=cdp)
+    time.sleep(2)
+
+
+# ---------------------------------------------------------------------------
+# Message collection primitives
+# ---------------------------------------------------------------------------
+
+def collect_visible_message_ts(cdp: int = 9222) -> list[str]:
+    """Read message timestamps from the current channel view DOM."""
+    js = f"""(() => {{
+        const msgs = [...document.querySelectorAll('{DOM["MESSAGE"]}')];
+        return JSON.stringify(msgs.map(m => m.dataset.msgTs).filter(Boolean));
+    }})()"""
+    raw = ab_eval(js, cdp=cdp)
+    result = decode_ab_json(raw)
+    return result if isinstance(result, list) else []
+
+
+def scroll_channel_down(cdp: int = 9222) -> None:
+    """Scroll the channel message pane down by one viewport."""
+    js = f"""(() => {{
+        const msgs = document.querySelectorAll('{DOM["MESSAGE"]}');
+        if (!msgs.length) return false;
+        msgs[msgs.length - 1].scrollIntoView({{block: 'start'}});
+        return true;
+    }})()"""
+    ab_eval(js, cdp=cdp)
+    time.sleep(0.5)
+
+
+# ---------------------------------------------------------------------------
+# Channel messaging
+# ---------------------------------------------------------------------------
+
+def send_channel_message(target: str, text: str, cdp: int = 9222) -> bool:
+    """Send a message to a channel (not a thread). Returns True if sent."""
+    ensure_clean_state(cdp)
+    if not navigate_to(target, cdp):
+        return False
+
+    def _find_msg_box() -> str | None:
+        snapshot = ab("snapshot", "-i", cdp=cdp)
+        for line in snapshot.splitlines():
+            if re.search(r'textbox "Message', line, re.IGNORECASE):
+                m = re.search(r'\[ref=(e\d+)\]', line)
+                if m:
+                    return m.group(1)
+        return None
+
+    msg_ref = _find_msg_box()
+    if not msg_ref:
+        time.sleep(1)
+        msg_ref = _find_msg_box()
+    if not msg_ref:
+        return False
+
+    ab("fill", f"@{msg_ref}", text, cdp=cdp)
+
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+    send_ref = find_ref(snapshot, r'button "Send now"')
+    if send_ref:
+        ab("click", f"@{send_ref}", cdp=cdp)
+    else:
+        ab("click", f"@{msg_ref}", cdp=cdp)
+        time.sleep(0.3)
+        ab("press", "Enter", cdp=cdp)
+    time.sleep(1)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Unreads primitives
+# ---------------------------------------------------------------------------
+
+def go_to_unreads(cdp: int = 9222) -> bool:
+    """Navigate to the Unreads view via the sidebar."""
+    snapshot = ensure_clean_state(cdp)
+
+    ref = find_ref(snapshot, r'treeitem "Unreads')
+    if not ref:
+        more_ref = find_ref(snapshot, r'button "More unreads"')
+        if more_ref:
+            ab("click", f"@{more_ref}", cdp=cdp)
+            time.sleep(1)
+            snapshot = ab("snapshot", "-i", cdp=cdp)
+            ref = find_ref(snapshot, r'treeitem "Unreads')
+
+    if not ref:
+        return False
+    ab("click", f"@{ref}", cdp=cdp)
+    time.sleep(2)
+    return True
+
+
+def extract_unreads_text(cdp: int = 9222) -> str:
+    """Read the raw text content of the Unreads view."""
+    js = r"""(() => {
+        const el = document.querySelector('.p-unreads_view')
+                || document.querySelector('[data-qa="unreads_view"]')
+                || document.querySelector('.p-workspace__primary_view')
+                || document.querySelector('[role="main"]');
+        return el ? el.innerText : '';
+    })()"""
+    raw = ab_eval(js, cdp=cdp)
+    result = decode_ab_json(raw)
+    return result if isinstance(result, str) else ""
+
+
+def parse_unreads(text: str) -> list[dict]:
+    """Parse the raw innerText of the unreads view into structured messages."""
+    messages: list[dict] = []
+    current_channel = None
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        if not line or line in (
+            "Mark as Read",
+            "Mark All Messages Read",
+            "Press Esc to Mark as Read",
+        ):
+            i += 1
+            continue
+
+        if i + 1 < len(lines) and re.match(r'^\d+ messages?$', lines[i + 1].strip()):
+            current_channel = line
+            i += 2
+            continue
+
+        if i + 1 < len(lines) and re.match(r'^\d{1,2}:\d{2}$', lines[i + 1].strip()):
+            user = line
+            timestamp = lines[i + 1].strip()
+            i += 2
+            body_lines: list[str] = []
+            while i < len(lines):
+                peek = lines[i].strip()
+                if not peek or peek in ("Mark as Read", "Press Esc to Mark as Read"):
+                    i += 1
+                    continue
+                if (i + 1 < len(lines)
+                        and re.match(r'^\d{1,2}:\d{2}$', lines[i + 1].strip())):
+                    break
+                if (i + 1 < len(lines)
+                        and re.match(r'^\d+ messages?$', lines[i + 1].strip())):
+                    break
+                if peek == "Mark All Messages Read":
+                    break
+                body_lines.append(peek)
+                i += 1
+            messages.append({
+                "channel": current_channel,
+                "user": user,
+                "time": timestamp,
+                "message": "\n".join(body_lines) if body_lines else "(no text / attachment)",
+            })
+            continue
+
+        i += 1
+
+    return messages
+
+
+# ---------------------------------------------------------------------------
+# Later primitives
+# ---------------------------------------------------------------------------
+
+LATER_STATUS_RE = re.compile(
+    r'^(Overdue by .+|Due in .+|Due today|No due date|Completed .+|Archived .+)',
+    re.IGNORECASE,
+)
+
+
+def parse_saved_item(lines: list[str]) -> dict:
+    """Parse text lines from a single .p-saved_item element."""
+    lines = [ln for ln in lines
+             if ln not in ("•", "Mark complete", "Edit reminder", "More actions")]
+
+    i = 0
+    status = ""
+    if lines and LATER_STATUS_RE.match(lines[0]):
+        status = lines[0]
+        i = 1
+
+    channel = lines[i] if i < len(lines) else ""
+    user = lines[i + 1] if i + 1 < len(lines) else ""
+    body = " ".join(lines[i + 2:]) if i + 2 < len(lines) else ""
+
+    return {"status": status or "No due date", "channel": channel, "user": user, "message": body}
+
+
+def go_to_later(tab: str = "in-progress", cdp: int = 9222) -> bool:
+    """Navigate to the Later view, optionally selecting a sub-tab."""
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+    later_ref = find_ref(snapshot, r'tab "Later"')
+    if not later_ref:
+        return False
+
+    ab("click", f"@{later_ref}", cdp=cdp)
+    time.sleep(2)
+
+    if tab != "in-progress":
+        snapshot = ab("snapshot", "-i", cdp=cdp)
+        tab_label = tab.capitalize()
+        tab_ref = find_ref(snapshot, rf'tab "{tab_label}')
+        if tab_ref:
+            ab("click", f"@{tab_ref}", cdp=cdp)
+            time.sleep(1)
+    return True
+
+
+def extract_visible_later_items(cdp: int = 9222) -> list[dict]:
+    """Read currently visible Later items from the virtual list.
+
+    Returns list of {key: str, lines: list[str]}.
+    """
+    raw = ab_eval(r"""
+(() => {
+    const listItems = document.querySelectorAll('[data-qa="virtual-list-item"]');
+    if (!listItems.length) return '[]';
+    return JSON.stringify([...listItems].map(li => {
+        const key = li.getAttribute('data-item-key') || '';
+        const saved = li.querySelector('.p-saved_item');
+        const lines = saved ? (saved.innerText || '').split('\n').map(l => l.trim()).filter(Boolean) : [];
+        return { key, lines };
+    }).filter(x => x.key && x.lines.length >= 2));
+})()
+""", cdp=cdp)
+    batch = decode_ab_json(raw)
+    return batch if isinstance(batch, list) else []
+
+
+def scroll_later_to_top(cdp: int = 9222) -> None:
+    """Scroll the Later virtual list to the top."""
+    ab_eval(r"""(() => {
+        const sc = document.querySelector('.c-virtual_list__scroll_container');
+        if (!sc) return;
+        let el = sc.parentElement;
+        while (el) {
+            if (el.scrollHeight > el.clientHeight + 10) { el.scrollTop = 0; return; }
+            el = el.parentElement;
+        }
+    })()""", cdp=cdp)
+    time.sleep(0.5)
+
+
+def scroll_later_down(cdp: int = 9222) -> None:
+    """Scroll the Later virtual list down by half a viewport."""
+    ab_eval(r"""(() => {
+        const sc = document.querySelector('.c-virtual_list__scroll_container');
+        if (!sc) return;
+        let el = sc.parentElement;
+        while (el) {
+            if (el.scrollHeight > el.clientHeight + 10) {
+                el.scrollTop += Math.floor(el.clientHeight / 2);
+                return;
+            }
+            el = el.parentElement;
+        }
+    })()""", cdp=cdp)
+    time.sleep(0.5)

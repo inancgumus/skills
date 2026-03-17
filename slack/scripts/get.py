@@ -1,21 +1,16 @@
 #!/usr/bin/env python3
-"""Get message content from Slack by message ID(s).
-
-Requires:
-  - Slack desktop app running with --remote-debugging-port=9222
-  - agent-browser CLI on PATH
+"""Get message content by ID(s). Workflow only — calls slack.py primitives, no Slack-specific internals here.
 
 Usage:
-  python get.py C0123456789/1234567890.123456
-  python get.py C0123456789/1234567890.123456 C0123456789/1234567891.456789
   python get.py C0123456789/1234567890.123456 --json
-  python get.py C0123456789/1234567890.123456 --cdp 9333
+  python get.py C0123456789/1234567890.123456 --with-replies --json
+  python get.py C0123456789/111.1 C0123456789/222.2 --json
+  python get.py "https://...slack.com/archives/C.../p..." --json
 """
 
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import re
 import sys
@@ -30,31 +25,13 @@ from slack import (
     read_thread_messages,
     resolve_ref,
     scroll_to_message,
+    ts_to_iso,
 )
-
-
-def ts_to_iso(ts: str) -> str:
-    dt = datetime.datetime.fromtimestamp(float(ts.split(".")[0]), datetime.timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def to_json_record(channel_id: str, channel: str, ts: str, data: dict | None) -> dict:
-    if data is None:
-        return {"channel_id": channel_id, "channel": channel, "message_id": ts, "error": "not found"}
-    return {
-        "channel_id": channel_id,
-        "channel": channel,
-        "message_id": ts,
-        "date": ts_to_iso(ts),
-        "user": data.get("user", ""),
-        "message": data.get("message", ""),
-        "reactions": data.get("reactions", []),
-    }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Get message content by ID(s)")
-    parser.add_argument("message_ids", nargs="+", help="CHANNEL_ID/MESSAGE_TS (one or more)")
+    parser.add_argument("message_ids", nargs="+", help="CHANNEL_ID/MESSAGE_TS or Slack URL (one or more)")
     parser.add_argument("--json", action="store_true", dest="as_json", help="Output as JSON")
     parser.add_argument("--with-replies", action="store_true", dest="with_replies", help="Include thread replies")
     parser.add_argument("--cdp", type=int, default=9222, help="CDP port (default: 9222)")
@@ -62,26 +39,36 @@ def main() -> None:
 
     ensure_slack_cdp(args.cdp)
 
-    # Group by channel to minimize navigation
+    # Resolve and group by channel for efficient navigation
     by_channel: dict[str, list[str]] = {}
     for mid in args.message_ids:
         cid, ts = resolve_ref(mid, args.cdp)
         if ts == "":
-            print("Error: message_id must reference a specific message, not just a channel.", file=sys.stderr)
-            sys.exit(1)
+            sys.exit("Error: must reference a specific message, not just a channel.")
         by_channel.setdefault(cid, []).append(ts)
 
-    results: list[tuple[str, str, str, dict | None]] = []
+    # Read each message
+    records: list[dict] = []
     for channel_id, timestamps in by_channel.items():
         go_to_channel(channel_id, args.cdp)
         channel = get_channel_name(channel_id, args.cdp)
         for ts in timestamps:
             data = read_message_content(ts, args.cdp)
-            results.append((channel_id, channel, ts, data))
+            if data is None:
+                records.append({"channel_id": channel_id, "channel": channel,
+                                "message_id": ts, "error": "not found"})
+            else:
+                records.append({
+                    "channel_id": channel_id, "channel": channel,
+                    "message_id": ts, "date": ts_to_iso(ts),
+                    "user": data.get("user", ""),
+                    "message": data.get("message", ""),
+                    "reactions": data.get("reactions", []),
+                })
 
-    # Read thread replies if requested
-    thread_msgs: dict[str, dict[str, str]] = {}  # parent_ts → {ts: content}
+    # Read thread replies
     if args.with_replies:
+        thread_msgs: dict[str, dict[str, str]] = {}
         for channel_id, timestamps in by_channel.items():
             go_to_channel(channel_id, args.cdp)
             for ts in timestamps:
@@ -90,44 +77,38 @@ def main() -> None:
                     thread_msgs[ts] = read_thread_messages(args.cdp)
                     close_thread(args.cdp)
 
+        for rec in records:
+            replies = thread_msgs.get(rec["message_id"], {})
+            replies.pop(rec["message_id"], None)
+            rec["replies"] = [
+                {"message_id": rts, "date": ts_to_iso(rts), "message": txt}
+                for rts, txt in replies.items()
+            ]
+
+    # Output
     if args.as_json:
-        records = [to_json_record(cid, ch, ts, data) for cid, ch, ts, data in results]
-        if args.with_replies:
-            for rec in records:
-                replies = thread_msgs.get(rec["message_id"], {})
-                # Remove parent from replies dict
-                replies.pop(rec["message_id"], None)
-                rec["replies"] = [{"message_id": rts, "date": ts_to_iso(rts), "message": txt}
-                                  for rts, txt in replies.items()]
         out = records[0] if len(records) == 1 else records
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
 
-    for channel_id, channel, ts, data in results:
-        if not data:
-            print(f"{channel_id}/{ts}: (not found)")
+    for rec in records:
+        if "error" in rec:
+            print(f"{rec['channel_id']}/{rec['message_id']}: ({rec['error']})")
             continue
-        user = data.get("user", "?")
-        date_label = data.get("dateLabel", "")
-        message = data.get("message", "")
-        reactions = data.get("reactions", [])
-
-        m = re.search(r"\d{1,2}:\d{2}", date_label)
-        time_str = m.group() if m else date_label
-        print(f"{user} ({time_str}):")
-        print(message)
+        m = re.search(r"\d{1,2}:\d{2}", rec.get("date", ""))
+        time_str = m.group() if m else rec.get("date", "")
+        print(f"{rec.get('user', '?')} ({time_str}):")
+        print(rec.get("message", ""))
+        reactions = rec.get("reactions", [])
         if reactions:
-            print("--")
-            print("Reactions:")
+            print("--\nReactions:")
             for r in reactions:
                 print(f"- {r['user']}: :{r['emoji']}:")
-        if args.with_replies and ts in thread_msgs:
-            replies = thread_msgs[ts]
-            replies.pop(ts, None)
-            if replies:
-                print(f"\n--- {len(replies)} replies ---")
-                for rts, txt in replies.items():
-                    print(f"\n{txt}")
+        replies = rec.get("replies", [])
+        if replies:
+            print(f"\n--- {len(replies)} replies ---")
+            for reply in replies:
+                print(f"\n{reply['message']}")
 
 
 if __name__ == "__main__":
