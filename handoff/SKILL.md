@@ -71,7 +71,8 @@ Format: `skill-name` — why it was relevant>
 ## Tool Activity
 <Every tool call made during the session, one per line, from your perspective: what you did and what you found.
 Meaningful takeaway, not verbatim output. Include reads, writes, edits, bash commands, web fetches, searches, agent spawns.
-Format: [tool] `target` — what was learned or done>
+For files: include the line count so the next agent knows what it's dealing with.
+Format: [tool] `target` (N lines) — what was learned or done>
 
 ## Next Steps
 <Ordered list. First item = immediate next action, specific enough to just do it.>
@@ -88,7 +89,8 @@ Always write a fresh `HANDOFF.md`. If one exists, overwrite it.
 
 1. Read `HANDOFF.md`.
 2. Load every skill listed under **Skills Used** before anything else.
-3. Re-read every file listed under **Tool Activity** that was a Read or Write, to restore the file context the previous agent had.
+3. Read every resource referenced anywhere in the document — files, URLs, GitHub issues, PRs, web pages. No exceptions, no skipping. The handoff notes describe what was found; the actual resources are the source of truth. If a file is too large to read at once, use offset and limit to read it in chunks until you have read all of it. If a URL or GitHub resource is referenced, fetch it. Do not treat the handoff summary as a substitute for the resource itself.
 4. Delete `HANDOFF.md`.
-5. Tell the user: "Resuming from [date]. Next step: [first item in Next Steps]. Shall I start?"
-6. Wait for confirmation.
+5. Check: for every resource referenced in the document, did you load it? If not, load it now before continuing.
+6. Tell the user: "Resuming from [date]. Next step: [first item in Next Steps]. Shall I start?"
+7. Wait for confirmation.
