@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "skills": {
+    "handoff": {
+      "source": "inancgumus/skills",
+      "sourceType": "github",
+      "computedHash": "7440f304e439c3ac321f4160f112aa69dddbba75124aa8a1e584dfe2ea7566fd"
+    },
+    "slack": {
+      "source": "inancgumus/skills",
+      "sourceType": "github",
+      "computedHash": "079acf886f8d565622bfba33ca7b8061ab98a0fa2f27e9d0601e65be73eed942"
+    },
+    "write-design-doc": {
+      "source": "inancgumus/skills",
+      "sourceType": "github",
+      "computedHash": "7171225f825a88b15a1916bb4dcc4f5ce61c382495b0b841fbdec9e9dc6e4b41"
+    }
+  }
+}

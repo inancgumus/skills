@@ -1,0 +1,4 @@
+interface:
+  display_name: "Write Design Doc"
+  short_description: "Write strong internal design docs"
+  default_prompt: "Use this skill to write or rewrite a design doc so a cold reader can quickly understand the problem, proposals, tradeoffs, and recommendation."
