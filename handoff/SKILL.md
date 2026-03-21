@@ -57,7 +57,8 @@ The next agent should know these exist and decide whether to chase them.>
 <Approaches explicitly decided against and why. Prevents the next agent from re-proposing them.>
 
 ## Environment
-<CWD, running processes and ports, active virtualenv/shell, key env vars discovered during the session.
+<CWD, running processes and ports, active virtualenv/shell, env var names (not values) discovered during the session.
+Never write env var values — record only the name so the next agent knows what to look for.
 Anything the next agent needs to orient itself practically.>
 
 ## User Preferences
