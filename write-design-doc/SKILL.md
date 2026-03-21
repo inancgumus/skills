@@ -102,10 +102,21 @@ Proposal 0: do nothing. Describe what stays the same and how the problem continu
 
 Make each proposal self-contained. A reader should understand it without following an issue link, a prototype branch, or a stakeholder quote.
 
-Use concrete pros and cons:
+Write pros and cons as concrete product, business, or user impact. Say who benefits or pays the cost, and what changes for them. Be specific.
 
-Good: "Requests from mobile clients keep their current retry behavior."
-Weak: "It is easy to explain."
+Good:
+- "Users stay logged in during infrastructure outages because tokens validate locally."
+- "The ops team stops getting paged for poll-related DB alerts."
+- "Customers behind corporate NATs are not penalized because limits are per API key, not per IP."
+
+Weak:
+- "Token validation is stateless."
+- "It is easy to explain."
+- "No Redis dependency."
+
+The weak versions describe system properties. The good versions say what those properties mean for someone. A reader skimming pros and cons should understand the tradeoff without reading the proposal text.
+
+When proposals share a dimension (latency, cost, migration effort, reliability), write the pro or con so it shows where this proposal sits relative to the others. A reader comparing proposals should see the tradeoff directly, not piece it together across sections.
 
 ### 6. Alternatives considered
 
