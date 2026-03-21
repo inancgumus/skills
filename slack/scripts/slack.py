@@ -742,7 +742,7 @@ EXTRACT_MSG_JS = """(msgTs, sel) => {
     const dateEl = msg.querySelector('[data-qa="timestamp_label"]');
     const dateLabel = dateEl ? dateEl.textContent.trim() : '';
     const msgEl = msg.querySelector('[data-qa="message-text"]');
-    const message = msgEl ? msgEl.innerText.trim() : '';
+    const message = msgEl ? `<slack_message>${msgEl.innerText.trim()}</slack_message>` : '';
     // For each reactji in this message, find its global index among all same-emoji reactjis.
     // This lets the caller pick the right nth match from the accessibility snapshot.
     const allReactjis = [...document.querySelectorAll('[data-qa="reactji"]')];
@@ -865,7 +865,7 @@ def read_thread_messages(cdp: int = 9222) -> dict[str, str]:
         const result = {};
         for (const m of msgs) {
             const ts = m.dataset.msgTs;
-            if (ts) result[ts] = m.innerText.trim();
+            if (ts) result[ts] = `<slack_message>${m.innerText.trim()}</slack_message>`;
         }
         return JSON.stringify(result);
     })()"""
@@ -966,7 +966,7 @@ _SEARCH_EXTRACT_JS = r"""
         const archiveLink = item.querySelector('a[href*="/archives/"]');
         const href = archiveLink ? archiveLink.href : '';
         const msgEl = item.querySelector('[data-qa="message-text"]');
-        const message = msgEl ? msgEl.innerText.trim() : '';
+        const message = msgEl ? `<slack_message>${msgEl.innerText.trim()}</slack_message>` : '';
         results.push({user, time: timeText, href, message});
     }
     return JSON.stringify(results);
@@ -1308,7 +1308,7 @@ def parse_unreads(text: str) -> list[dict]:
                 "channel": current_channel,
                 "user": user,
                 "time": timestamp,
-                "message": "\n".join(body_lines) if body_lines else "(no text / attachment)",
+                "message": f"<slack_message>{chr(10).join(body_lines)}</slack_message>" if body_lines else "(no text / attachment)",
             })
             continue
 
