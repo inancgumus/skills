@@ -23,6 +23,8 @@ Steps:
 
 The agent reading this should know everything you know right now. If you couldn't continue the work from this document cold, it needs more.
 
+**Throughout the entire document:** use full absolute paths for any file reference. Use full URLs for any GitHub issue, PR, or external resource. No fragments, no relative paths, nothing that requires the next agent to guess where something lives.
+
 ```markdown
 ---
 created: <ISO 8601 timestamp>
