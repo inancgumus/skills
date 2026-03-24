@@ -1068,7 +1068,7 @@ def execute_search(query: str, cdp: int = 9222) -> None:
 
     search_option = find_ref(snapshot, r'option "Search for:')
     if not search_option:
-        sys.exit("Error: 'Search for:' option not found in dropdown.")
+        sys.exit("No results found, or the query may be invalid.")
     ab("click", f"@{search_option}", cdp=cdp)
     wait_for("""document.querySelector('[data-qa="search_result"]') ? 'ok' : null""", cdp=cdp, timeout=10)
 
