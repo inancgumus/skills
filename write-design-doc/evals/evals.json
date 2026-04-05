@@ -1,0 +1,20 @@
+{
+  "skill_name": "write-design-doc",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We need to decide whether to migrate our notification service from polling to webhooks. Right now every client polls every 30 seconds, which is hammering the database. We have about 2000 clients. The ops team is complaining about DB load, and users complain about delayed notifications (up to 30s). We considered SSE but our load balancer doesn't support long-lived connections. Write a design doc comparing the options.",
+      "expected_output": "A complete design doc with background, problem, goals/non-goals, proposals (including do-nothing), pros/cons, and recommendation. Should define terms for cold readers, show concrete behavior, and use the template structure."
+    },
+    {
+      "id": 2,
+      "prompt": "Here's a messy draft of our auth migration design doc. It jumps between implementation details and product goals, the background section argues for the conclusion, and there's no alternatives section. Please restructure it:\n\n---\n# Auth Migration\n\nWe need to move to OAuth2 because our current session-based auth is insecure and doesn't scale. The sessions are stored in Redis and when Redis goes down auth breaks for everyone. OAuth2 is the industry standard and will solve all our problems.\n\nWe'll use Auth0 as the provider. It supports PKCE flow which is what we need for our SPA. The migration will take about 3 months.\n\nPros: better security, industry standard, scales better\nCons: costs money, migration effort\n\nWe should do this ASAP.\n---",
+      "expected_output": "A restructured design doc that separates background from problem, removes the conclusion-in-background bias, adds alternatives (including do-nothing and self-hosted OAuth2), defines terms for cold readers, and has concrete pros/cons instead of vague ones."
+    },
+    {
+      "id": 3,
+      "prompt": "I need to write an RFC for adding rate limiting to our public API. We're getting abuse from scrapers, and legitimate customers are seeing 503s during peak hours. Our API serves about 10k requests/second. We've had 3 incidents in the last month where scrapers caused cascading failures. The API is built on Go with an nginx reverse proxy in front. Should I use token bucket, sliding window, or fixed window? Per-IP or per-API-key? Write the design doc.",
+      "expected_output": "A design doc that starts with the problem (incidents, customer impact), defines rate limiting approaches for cold readers, presents each algorithm as a proposal with concrete behavior and tradeoffs, addresses the per-IP vs per-API-key dimension separately, includes a do-nothing option showing the cost of inaction, and recommends with reasoning."
+    }
+  ]
+}
