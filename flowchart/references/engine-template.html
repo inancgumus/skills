@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Architecture Viewer</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #root { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: var(--text-base);
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+:root {
+  --bg: #1a1a1e;
+  --surface: #242428;
+  --surface-hover: #2a2a2f;
+  --border: #333338;
+  --text: #e8e4df;
+  --text-muted: #8a8780;
+  --accent: #6b8acd;
+  --method-get: #5a9a6b;
+  --method-post: #6b8acd;
+  --method-put: #c9a84e;
+  --method-delete: #c75f5f;
+  --new: #5a9a6b;
+  --changed: #6b8acd;
+  --removed: #c75f5f;
+  --edge-a: #8a8780;
+  --edge-b: #6b8aad;
+  --font-mono: "SF Mono", "Fira Code", "Consolas", monospace;
+  font-size: 13px;
+  --text-xs: 0.8rem;
+  --text-sm: 0.9rem;
+  --text-base: 1rem;
+  --text-lg: 1.1rem;
+  --text-xl: 1.3rem;
+}
+code, pre, .mono { font-family: var(--font-mono); font-size: var(--text-sm); }
+pre { white-space: pre-wrap; word-break: break-word; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(232,228,223,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(232,228,223,0.18); }
+
+/* Layout */
+.app { display: flex; flex-direction: column; height: 100%; }
+.tab-bar {
+  display: flex; gap: 0; border-bottom: 1px solid var(--border);
+  background: var(--surface); padding: 0 16px; flex-shrink: 0;
+}
+.tab-btn {
+  padding: 10px 20px; border: none; background: none; color: var(--text-muted);
+  font-family: inherit; font-size: var(--text-lg); font-weight: 500;
+  cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+.scene-bar {
+  display: flex; gap: 0; border-bottom: 1px solid var(--border);
+  background: var(--bg); padding: 0 16px; flex-shrink: 0;
+}
+.scene-btn {
+  padding: 8px 16px; border: none; background: none; color: var(--text-muted);
+  font-family: inherit; font-size: var(--text-base); cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.scene-btn:hover { color: var(--text); }
+.scene-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.workspace { display: flex; flex: 1; overflow: hidden; }
+.diagram-area { flex: 7; position: relative; overflow: hidden; }
+.diagram-container { position: absolute; inset: 0; }
+.detail-panel {
+  flex: 3; min-width: 320px; max-width: 420px; border-left: 1px solid var(--border);
+  background: var(--surface); overflow-y: auto; padding: 0;
+}
+.detail-panel.closed { display: none; }
+
+/* Diagram nodes */
+.dnode {
+  position: absolute; padding: 0.7rem 1rem; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+  transition: opacity 0.1s, border-color 0.1s; z-index: 2;
+  min-width: 15rem; width: max-content;
+}
+.dnode:hover { background: var(--surface-hover); }
+.dnode.selected { border: 2px solid var(--accent); }
+.dnode.dimmed { opacity: 0.2; }
+.dnode-title { font-size: var(--text-base); font-weight: 600; text-align: left; white-space: nowrap; }
+.dnode-sub { font-size: var(--text-sm); color: var(--text-muted); text-align: left; white-space: nowrap; }
+
+/* Change status badges on nodes */
+.dnode.status-new { border-color: var(--new); }
+.dnode.status-changed { border-color: var(--changed); }
+.dnode.status-removed { border-color: var(--removed); text-decoration: line-through; opacity: 0.7; }
+.dnode.status-removed .dnode-title { text-decoration: line-through; }
+.dnode .incomplete-dot {
+  position: absolute; top: 6px; right: 6px; width: 7px; height: 7px;
+  background: var(--removed); border-radius: 50%;
+}
+.change-badge {
+  position: absolute; top: -8px; right: -8px; font-size: 9px; font-weight: 700;
+  padding: 1px 5px; border-radius: 3px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.change-badge.new { background: var(--new); color: #fff; }
+.change-badge.changed { background: var(--changed); color: #fff; }
+.change-badge.removed { background: var(--removed); color: #fff; }
+
+/* SVG edges */
+.edge-layer { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; }
+.edge-layer path { pointer-events: stroke; cursor: pointer; }
+.edge-layer path.dimmed { opacity: 0.2; stroke-dasharray: none !important; animation: none !important; }
+
+/* Data flow: marching ants */
+@keyframes edge-flow {
+  to { stroke-dashoffset: -24; }
+}
+.edge-layer path:not(.dimmed) {
+  stroke-dasharray: 4 20;
+  animation: edge-flow 1.4s linear infinite;
+}
+
+/* Data flow: traveling dots */
+.flow-dot { pointer-events: auto; cursor: pointer; }
+.flow-dot.dimmed-dot { display: none; }
+.edge-label {
+  position: absolute; font-family: var(--font-mono); font-size: var(--text-xs);
+  color: var(--text-muted); pointer-events: auto; cursor: pointer;
+  z-index: 3;
+  padding: 0.2rem 0.5rem;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  background: var(--bg);
+  border-radius: 2px;
+}
+.edge-label.dimmed { opacity: 0.15; }
+.edge-label:hover { color: var(--accent); z-index: 5; }
+
+/* Endpoint cards below nodes */
+.endpoint-card {
+  position: absolute;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.3;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 7px;
+  z-index: 3;
+  pointer-events: auto;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.endpoint-card.dimmed { opacity: 0.15; }
+.endpoint-card:hover { border-color: var(--accent); z-index: 5; }
+.endpoint-card .ep-head { display: flex; align-items: center; gap: 4px; }
+.endpoint-card .ep-method {
+  font-size: 7px; font-weight: 700; padding: 0 3px; border-radius: 2px; color: #fff; flex-shrink: 0;
+}
+.endpoint-card .ep-method.GET { background: var(--method-get); }
+.endpoint-card .ep-method.POST { background: var(--method-post); }
+.endpoint-card .ep-method.PUT { background: var(--method-put); }
+.endpoint-card .ep-method.DELETE { background: var(--method-delete); }
+.endpoint-card .ep-path { color: var(--text); }
+.endpoint-card .ep-io { color: var(--text-muted); margin-top: 1px; }
+.endpoint-card .ep-in::before { content: "→ "; color: var(--new); }
+.endpoint-card .ep-out::before { content: "← "; color: var(--accent); }
+
+/* Modal popover — always centered */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-box {
+  z-index: 51; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 16px 20px; font-family: inherit; font-size: var(--text-sm); color: var(--text);
+  max-width: 480px; width: 90%; max-height: 80vh; overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.modal-box .modal-title { font-family: var(--font-mono); font-weight: 600; margin-bottom: 8px; }
+
+/* Detail panel styling */
+.dp-header { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.dp-title { font-size: var(--text-xl); font-weight: 600; margin-bottom: 4px; }
+.dp-desc { font-size: var(--text-sm); color: var(--text-muted); }
+.dp-section { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.dp-section-title {
+  font-size: var(--text-xs); font-weight: 600; color: var(--text-muted);
+  margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.dp-file { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent); margin-bottom: 2px; }
+.dp-func { margin-bottom: 10px; }
+.dp-func-name { font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 600; color: var(--text); }
+.dp-func-sig { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); margin-top: 2px; }
+.dp-func-desc { font-size: var(--text-sm); color: var(--text-muted); margin-top: 2px; }
+.dp-endpoint { margin-bottom: 14px; }
+.dp-method {
+  display: inline-block; font-family: var(--font-mono); font-size: 10px; font-weight: 700;
+  padding: 1px 5px; border-radius: 3px; margin-right: 6px; vertical-align: middle;
+}
+.dp-method.GET { background: var(--method-get); color: #fff; }
+.dp-method.POST { background: var(--method-post); color: #fff; }
+.dp-method.PUT { background: var(--method-put); color: #fff; }
+.dp-method.DELETE { background: var(--method-delete); color: #fff; }
+.dp-path { font-family: var(--font-mono); font-size: var(--text-sm); vertical-align: middle; }
+.dp-field-table { width: 100%; font-size: var(--text-xs); margin-top: 6px; }
+.dp-field-table th {
+  text-align: left; font-weight: 600; color: var(--text-muted); padding: 3px 8px 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+.dp-field-table td { padding: 3px 8px 3px 0; vertical-align: top; border-bottom: 1px solid rgba(51,51,56,0.5); }
+.dp-field-name { font-family: var(--font-mono); color: var(--text); }
+.dp-field-type { font-family: var(--font-mono); color: var(--text-muted); }
+.dp-note { font-size: var(--text-sm); color: var(--text-muted); margin-bottom: 4px; padding-left: 10px; text-indent: -10px; }
+.dp-note::before { content: "\2022 "; color: var(--text-muted); }
+.dp-issue { font-size: var(--text-sm); margin-bottom: 3px; }
+.dp-issue a { color: var(--accent); }
+.dp-status-badge {
+  display: inline-block; font-size: 9px; font-weight: 700; padding: 2px 6px;
+  border-radius: 2px; margin-left: 8px; vertical-align: baseline; text-transform: uppercase; letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.dp-status-badge.done { background: var(--new); color: #fff; }
+.dp-status-badge.open { background: var(--changed); color: #fff; }
+.dp-status-badge.pending { background: var(--method-put); color: #fff; }
+
+/* Compare view in Changes tab */
+.dp-compare { display: flex; gap: 1px; margin-top: 8px; }
+.dp-compare-col { flex: 1; background: var(--bg); padding: 10px; border-radius: 4px; }
+.dp-compare-col-title { font-size: var(--text-xs); font-weight: 600; color: var(--text-muted); margin-bottom: 6px; }
+
+/* Code block */
+.dp-code {
+  background: var(--bg); padding: 8px 10px; border-radius: 4px; font-family: var(--font-mono);
+  font-size: var(--text-xs); color: var(--text); margin-top: 4px; overflow-x: auto;
+}
+
+/* Sub-labels for headers/status codes */
+.dp-sub-label { font-size: var(--text-xs); font-weight: 600; color: var(--text-muted); margin-top: 8px; margin-bottom: 4px; }
+
+/* Search overlay */
+.search-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6); z-index: 100; display: flex; justify-content: center; padding-top: 120px;
+}
+.search-box {
+  width: 500px; max-height: 400px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.search-input {
+  width: 100%; padding: 12px 16px; border: none; background: transparent;
+  color: var(--text); font-family: inherit; font-size: var(--text-lg); outline: none;
+  border-bottom: 1px solid var(--border);
+}
+.search-results { max-height: 320px; overflow-y: auto; }
+.search-result {
+  padding: 8px 16px; cursor: pointer; font-size: var(--text-sm);
+}
+.search-result:hover { background: var(--surface-hover); }
+.search-result-title { color: var(--text); }
+.search-result-sub { font-size: var(--text-xs); color: var(--text-muted); font-family: var(--font-mono); }
+
+/* Keyboard hint */
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ARCHITECTURE VIEWER ENGINE — generic, reusable
+//
+// To create your own architecture diagram, call:
+//
+//   createArchitectureViewer({
+//     title:  "My System Architecture",
+//     tabs:   [{ id: "current", label: "Current" }, { id: "target", label: "Target" }],
+//     nodes:  { "node-id": { title, sub, category, description, files[], functions[], endpoints[], issues[], notes[] } },
+//     scenes: { "scene-id": { tab, label, width, height, nodes: [{ id, x, y }], edges: [{ from, to, label, desc, endpoints[] }], notes } },
+//     links: {
+//       files:  [{ baseUrl: "https://github.com/org/repo/blob/main/", pattern: /.*/ }],
+//       issues: [{ prefix: "repo#", url: "https://github.com/org/repo/issues/" }]
+//     }
+//   });
+//
+// Nodes:
+//   title         — display name
+//   sub           — subtitle (file, module)
+//   category      — grouping label
+//   description   — full text shown in detail panel
+//   changeStatus  — "new" | "changed" | "removed" | "unchanged" (for change-tracking scenes)
+//   beforeState/afterState — comparison text for change nodes
+//   incomplete    — true to show a red dot (not yet implemented)
+//   files[]       — source file paths (linked via links.files config)
+//   functions[]   — { name, sig, desc, file }
+//   endpoints[]   — { method, path, headers[], requestBody[], responseBody[], statusCodes[], calledBy }
+//   issues[]      — { id, title, status: "done"|"open"|"pending", url }
+//   notes[]       — free-text notes (auto-linked)
+//
+// Scenes:
+//   tab           — which tab this scene belongs to
+//   label         — scene tab label
+//   width/height  — scene coordinate space (layout engine may expand)
+//   nodes[]       — { id, x, y, status? } positioned in scene coords
+//   edges[]       — { from, to, label, desc, endpoints[]? }
+//     endpoints[] — { method, path, in?, out? } shown as cards below the from-node
+//   notes         — bottom-of-scene annotation
+//
+// Links:
+//   files[]       — { baseUrl, pattern? } for linking source file paths
+//   issues[]      — { prefix, url } maps "prefix123" → url + "123"
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let VIEWER = { title: "", tabs: [], nodes: {}, scenes: {}, links: { files: [], issues: [] } };
+
+// ═══ YOUR DATA GOES HERE ═══
+// Define NODE_DATA and SCENES, then call createArchitectureViewer() at the bottom.
+// See the config schema above for the full API.
+
+// ─── EDGE ROUTING ─────────────────────────────────────────────────────────────
+
+/* These are recalculated from CSS rem in the Diagram component */
+const NODE_REM_W = 15;
+const NODE_REM_H = 4.35;
+/* Fallback px values — overridden at render time */
+let NODE_WIDTH = 195;
+let NODE_HEIGHT = 46;
+
+function getNodeCenter(node) {
+  return { x: node.x + (node.w || NODE_WIDTH) / 2, y: node.y + (node.h || NODE_HEIGHT) / 2 };
+}
+
+function getNodePort(node, side) {
+  const w = node.w || NODE_WIDTH;
+  const h = node.h || NODE_HEIGHT;
+  if (side === "right") return { x: Math.round(node.x + w), y: Math.round(node.y + h / 2) };
+  if (side === "left") return { x: Math.round(node.x), y: Math.round(node.y + h / 2) };
+  if (side === "bottom") return { x: Math.round(node.x + w / 2), y: Math.round(node.y + h) };
+  return { x: Math.round(node.x + w / 2), y: Math.round(node.y) };
+}
+
+function edgePathLength(route) {
+  if (route.fromSide === "right" || route.fromSide === "left") {
+    return Math.abs(route.midX - route.from.x) + Math.abs(route.to.y - route.from.y) + Math.abs(route.to.x - route.midX);
+  }
+  return Math.abs(route.midY - route.from.y) + Math.abs(route.to.x - route.from.x) + Math.abs(route.to.y - route.midY);
+}
+
+function routeEdge(fromNode, toNode) {
+  const dx = toNode.x - fromNode.x;
+  const dy = toNode.y - fromNode.y;
+  let fromSide, toSide;
+  /* If target is clearly to the right (dx > NODE_WIDTH), always go horizontal-first.
+     This prevents vertical edges from User that cross through neighboring nodes. */
+  if (dx >= NODE_WIDTH || Math.abs(dx) > Math.abs(dy)) {
+    fromSide = dx > 0 ? "right" : "left";
+    toSide = dx > 0 ? "left" : "right";
+  } else {
+    fromSide = dy > 0 ? "bottom" : "top";
+    toSide = dy > 0 ? "top" : "bottom";
+  }
+  const from = getNodePort(fromNode, fromSide);
+  const to = getNodePort(toNode, toSide);
+  const midX = Math.round((from.x + to.x) / 2);
+  const midY = Math.round((from.y + to.y) / 2);
+  let path;
+  if (fromSide === "right" || fromSide === "left") {
+    path = `M${from.x},${from.y} L${midX},${from.y} L${midX},${to.y} L${to.x},${to.y}`;
+  } else {
+    path = `M${from.x},${from.y} L${from.x},${midY} L${to.x},${midY} L${to.x},${to.y}`;
+  }
+  return { path, from, to, midX, midY, fromSide };
+}
+
+/* Walk the L-shaped path and return a point for the label.
+   Starts at 50% of total length, then slides along the path if
+   the point overlaps any node bounding box. `allNodes` is an array
+   of {x, y, w, h} in the same coordinate space as the route. */
+function edgeLabelPoint(route, allNodes, labelHW) {
+  /* Build an array of waypoints along the path */
+  let pts;
+  if (route.fromSide === "right" || route.fromSide === "left") {
+    pts = [
+      route.from,
+      { x: route.midX, y: route.from.y },
+      { x: route.midX, y: route.to.y },
+      route.to
+    ];
+  } else {
+    pts = [
+      route.from,
+      { x: route.from.x, y: route.midY },
+      { x: route.to.x, y: route.midY },
+      route.to
+    ];
+  }
+  /* Compute cumulative distances */
+  const dists = [0];
+  for (let i = 1; i < pts.length; i++) {
+    dists.push(dists[i - 1] + Math.abs(pts[i].x - pts[i - 1].x) + Math.abs(pts[i].y - pts[i - 1].y));
+  }
+  const total = dists[dists.length - 1];
+  if (total === 0) return route.from;
+
+  /* Interpolate a point at distance `d` along the path */
+  function pointAtDist(d) {
+    for (let i = 1; i < pts.length; i++) {
+      if (dists[i] >= d) {
+        const segLen = dists[i] - dists[i - 1];
+        const t = segLen > 0 ? (d - dists[i - 1]) / segLen : 0;
+        return {
+          x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t,
+          y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t
+        };
+      }
+    }
+    return pts[pts.length - 1];
+  }
+
+  /* Check if a label centered at `p` overlaps any node box.
+     Labels use transform: translate(-50%, -50%), so we pad each
+     node by the label's half-width and half-height. */
+  const LABEL_HW = labelHW || 44;
+  const LABEL_HH = 12;
+  function hitsNode(p) {
+    if (!allNodes) return false;
+    return allNodes.some(n =>
+      p.x >= n.x - LABEL_HW && p.x <= n.x + n.w + LABEL_HW &&
+      p.y >= n.y - LABEL_HH && p.y <= n.y + n.h + LABEL_HH
+    );
+  }
+
+  /* Scan the full path to find all clear gaps, then place label at the center
+     of the largest clear gap (preferring gaps closer to the 50% midpoint). */
+  const half = total / 2;
+  const pt = pointAtDist(half);
+  if (!hitsNode(pt)) return pt;
+
+  const step = 4;
+  const samples = Math.ceil(total / step);
+  /* Find all clear runs along the path */
+  let runs = [];
+  let runStart = -1;
+  for (let i = 0; i <= samples; i++) {
+    const d = Math.min(i * step, total);
+    const p = pointAtDist(d);
+    if (!hitsNode(p)) {
+      if (runStart < 0) runStart = d;
+    } else {
+      if (runStart >= 0) { runs.push({ start: runStart, end: d - step }); runStart = -1; }
+    }
+  }
+  if (runStart >= 0) runs.push({ start: runStart, end: total });
+
+  if (runs.length > 0) {
+    /* Pick the run whose center is closest to the path midpoint */
+    let best = null, bestDist = Infinity;
+    for (const r of runs) {
+      const mid = (r.start + r.end) / 2;
+      const dist = Math.abs(mid - half);
+      if (dist < bestDist) { best = r; bestDist = dist; }
+    }
+    /* Always use the best gap's center — never place a label on an obstacle. */
+    return pointAtDist((best.start + best.end) / 2);
+  }
+
+  /* All on-path positions blocked — try vertical offset above/below the midpoint */
+  for (const dy of [-LABEL_HH * 2.5, LABEL_HH * 2.5, -LABEL_HH * 5, LABEL_HH * 5]) {
+    const shifted = { x: pt.x, y: pt.y + dy };
+    if (!hitsNode(shifted)) return shifted;
+  }
+  return pt;
+}
+
+// ─── COMPONENTS ───────────────────────────────────────────────────────────────
+
+function MethodBadge({ method }) {
+  return React.createElement("span", { className: `dp-method ${method}` }, method);
+}
+
+function FieldTable({ fields, title }) {
+  if (!fields || fields.length === 0) return null;
+  return React.createElement("div", null,
+    title && React.createElement("div", { className: "dp-sub-label" }, title),
+    React.createElement("table", { className: "dp-field-table" },
+      React.createElement("thead", null,
+        React.createElement("tr", null,
+          React.createElement("th", null, "Field"),
+          React.createElement("th", null, "Type"),
+          React.createElement("th", null, "Description")
+        )
+      ),
+      React.createElement("tbody", null,
+        fields.map((f, i) => React.createElement("tr", { key: i },
+          React.createElement("td", null, React.createElement("span", { className: "dp-field-name" }, f.name)),
+          React.createElement("td", null, React.createElement("span", { className: "dp-field-type" }, f.type)),
+          React.createElement("td", null, f.desc)
+        ))
+      )
+    )
+  );
+}
+
+// ─── GENERIC LINK HELPERS (use VIEWER.links config) ──────────────────────────
+
+function fileLink(path) {
+  if (!path) return null;
+  const clean = path.replace(/\s*\(.*\)/, "").trim();
+  const match = clean.match(/^([^:]+?)(?::(\d+)(?:-(\d+))?)?$/);
+  if (!match) return { href: null, text: path };
+  const filePath = match[1].replace(/^~/, "");
+  const line = match[2];
+  const lineEnd = match[3];
+  /* Find a matching file link config */
+  const cfg = (VIEWER.links.files || []).find(f => !f.pattern || f.pattern.test(filePath));
+  if (!cfg) return { href: null, text: path };
+  let href = cfg.baseUrl + filePath;
+  if (line && lineEnd) href += "#L" + line + "-L" + lineEnd;
+  else if (line) href += "#L" + line;
+  return { href, text: path };
+}
+
+function issueLink(ref) {
+  if (!ref) return null;
+  for (const cfg of (VIEWER.links.issues || [])) {
+    if (ref.startsWith(cfg.prefix)) {
+      const num = ref.slice(cfg.prefix.length);
+      return cfg.url + num;
+    }
+  }
+  return null;
+}
+
+function FileLink({ path }) {
+  const info = fileLink(path);
+  if (!info) return null;
+  if (info.href) return React.createElement("a", { href: info.href, target: "_blank", className: "dp-file" }, info.text);
+  return React.createElement("span", { className: "dp-file" }, info.text);
+}
+
+function EndpointBlock({ ep }) {
+  return React.createElement("div", { className: "dp-endpoint" },
+    React.createElement("div", null,
+      React.createElement(MethodBadge, { method: ep.method }),
+      React.createElement("span", { className: "dp-path" }, ep.path)
+    ),
+    ep.headers && React.createElement("div", null,
+      React.createElement("div", { className: "dp-sub-label" }, "Headers"),
+      ep.headers.map((h, i) => React.createElement("div", { key: i, className: "dp-code", style: { marginBottom: 2, marginTop: 0, padding: "2px 8px" } }, h))
+    ),
+    React.createElement(FieldTable, { fields: ep.requestBody, title: "Request body" }),
+    React.createElement(FieldTable, { fields: ep.responseBody, title: "Response body" }),
+    ep.statusCodes && React.createElement("div", null,
+      React.createElement("div", { className: "dp-sub-label" }, "Status codes"),
+      ep.statusCodes.map((s, i) => React.createElement("div", { key: i, style: { fontSize: "var(--text-xs)", marginBottom: 2 } },
+        React.createElement("code", null, s.code), " \u2014 ", s.desc
+      ))
+    ),
+    ep.calledBy && React.createElement("div", { style: { fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 4 } },
+      "Go: ", React.createElement(FileLink, { path: ep.calledBy })
+    )
+  );
+}
+
+/* Look up the full endpoint schema from VIEWER.nodes by matching method + last path segment */
+function findFullEndpoint(method, shortPath, fromId, toId) {
+  const segs = shortPath.replace(/\{[^}]*\}/g, '').split('/').filter(s => s && s !== '...');
+  const lastSeg = segs[segs.length - 1];
+  if (!lastSeg) return null;
+  for (const nodeId of [toId, fromId]) {
+    const data = VIEWER.nodes[nodeId];
+    if (!data || !data.endpoints) continue;
+    for (const ep of data.endpoints) {
+      if (ep.method !== method) continue;
+      const fullSegs = ep.path.replace(/\{[^}]*\}/g, '').split('/').filter(Boolean);
+      const fullLast = fullSegs[fullSegs.length - 1];
+      if (fullLast === lastSeg && fullSegs.length === segs.length) return ep;
+    }
+    /* Fallback: match just the last segment */
+    for (const ep of data.endpoints) {
+      if (ep.method !== method) continue;
+      if (ep.path.replace(/\{[^}]*\}/g, '').split('/').filter(Boolean).pop() === lastSeg) return ep;
+    }
+  }
+  return null;
+}
+
+function EndpointDetailPopover({ ep, fullEp, onClose }) {
+  return React.createElement("div", { className: "modal-backdrop", onClick: onClose },
+    React.createElement("div", {
+      className: "modal-box",
+      onClick: (e) => e.stopPropagation()
+    },
+      fullEp
+        ? React.createElement(EndpointBlock, { ep: fullEp })
+        : React.createElement("div", { className: "dp-endpoint" },
+            React.createElement("div", null,
+              React.createElement(MethodBadge, { method: ep.method }),
+              React.createElement("span", { className: "dp-path" }, ep.path)
+            ),
+            ep.in && React.createElement("div", { className: "dp-sub-label", style: { marginTop: 6 } }, "Request"),
+            ep.in && React.createElement("div", { style: { fontSize: "var(--text-sm)", color: "var(--text)" } }, ep.in),
+            ep.out && React.createElement("div", { className: "dp-sub-label", style: { marginTop: 6 } }, "Response"),
+            ep.out && React.createElement("div", { style: { fontSize: "var(--text-sm)", color: "var(--text)" } }, ep.out)
+          )
+    )
+  );
+}
+
+function DetailPanel({ nodeId, onClose }) {
+  const data = VIEWER.nodes[nodeId];
+  if (!data) return null;
+
+  const isChangeNode = nodeId.startsWith("changes-");
+
+  return React.createElement("div", { className: "detail-panel" },
+    React.createElement("div", { className: "dp-header" },
+      React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
+        React.createElement("div", null,
+          React.createElement("div", { className: "dp-title" }, data.title),
+          data.sub && React.createElement("div", { style: { fontSize: "var(--text-sm)", color: "var(--text-muted)", marginBottom: "0.3rem" } }, data.sub),
+          React.createElement("div", { className: "dp-desc" }, data.description)
+        ),
+        React.createElement("button", {
+          onClick: onClose,
+          style: { background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 18, padding: "0 4px" }
+        }, "\u00d7")
+      ),
+      data.category && React.createElement("div", { style: { fontSize: "var(--text-xs)", color: "var(--text-muted)", marginTop: 4 } }, data.category)
+    ),
+
+    // Compare view for changes tab
+    isChangeNode && (data.beforeState || data.afterState) && React.createElement("div", { className: "dp-section" },
+      React.createElement("div", { className: "dp-section-title" }, "Comparison"),
+      React.createElement("div", { className: "dp-compare" },
+        React.createElement("div", { className: "dp-compare-col" },
+          React.createElement("div", { className: "dp-compare-col-title" }, "Before"),
+          React.createElement("div", { style: { fontSize: "var(--text-sm)", color: "var(--text)" } }, data.beforeState || "N/A")
+        ),
+        React.createElement("div", { className: "dp-compare-col" },
+          React.createElement("div", { className: "dp-compare-col-title" }, "After"),
+          React.createElement("div", { style: { fontSize: "var(--text-sm)", color: "var(--text)" } }, data.afterState || "N/A")
+        )
+      )
+    ),
+
+    // Files
+    data.files && data.files.length > 0 && React.createElement("div", { className: "dp-section" },
+      React.createElement("div", { className: "dp-section-title" }, "Files"),
+      data.files.map((f, i) => React.createElement("div", { key: i }, React.createElement(FileLink, { path: f })))
+    ),
+
+    // Functions
+    data.functions && data.functions.length > 0 && React.createElement("div", { className: "dp-section" },
+      React.createElement("div", { className: "dp-section-title" }, "Functions"),
+      data.functions.map((f, i) => React.createElement("div", { key: i, className: "dp-func" },
+        React.createElement("div", { className: "dp-func-name" }, f.name),
+        React.createElement("div", { className: "dp-func-sig" }, f.sig),
+        React.createElement("div", { className: "dp-func-desc" }, f.desc),
+        f.file && React.createElement("div", { style: { marginTop: 2 } }, React.createElement(FileLink, { path: f.file }))
+      ))
+    ),
+
+    // Endpoints
+    data.endpoints && data.endpoints.length > 0 && React.createElement("div", { className: "dp-section" },
+      React.createElement("div", { className: "dp-section-title" }, "Endpoints"),
+      data.endpoints.map((ep, i) => React.createElement(EndpointBlock, { key: i, ep }))
+    ),
+
+    // Issues
+    data.issues && data.issues.length > 0 && React.createElement("div", { className: "dp-section" },
+      React.createElement("div", { className: "dp-section-title" }, "Related issues"),
+      data.issues.map((iss, i) => React.createElement("div", { key: i, className: "dp-issue" },
+        iss.url
+          ? React.createElement("a", { href: iss.url, target: "_blank" }, iss.id)
+          : React.createElement("span", { style: { color: "var(--text)" } }, iss.id),
+        " \u2014 ", iss.title, "\u00a0",
+        React.createElement("span", { className: `dp-status-badge ${iss.status}` }, iss.status)
+      ))
+    ),
+
+    // Notes
+    data.notes && data.notes.length > 0 && React.createElement("div", { className: "dp-section" },
+      React.createElement("div", { className: "dp-section-title" }, "Notes"),
+      data.notes.map((n, i) => {
+        /* Auto-link URLs and render `backtick` spans as <code>.
+           Also link file:line references via the configured links.files patterns. */
+        const parts = n.split(/(https?:\/\/[^\s]+|`[^`]+`|[a-zA-Z_\/]+\.\w+:\d+(?:-\d+)?)/g);
+        return React.createElement("div", { key: i, className: "dp-note" },
+          parts.map((part, j) => {
+            if (!part) return null;
+            if (part.match(/^https?:\/\//)) return React.createElement("a", { key: j, href: part, target: "_blank" }, part);
+            if (part.startsWith('`') && part.endsWith('`')) return React.createElement("code", { key: j }, part.slice(1, -1));
+            if (part.match(/\.\w+:\d+/)) {
+              const info = fileLink(part);
+              return info && info.href ? React.createElement("a", { key: j, href: info.href, target: "_blank", style: { fontFamily: "var(--font-mono)", fontSize: "var(--text-xs)" } }, part) : React.createElement("code", { key: j }, part);
+            }
+            return part;
+          })
+        );
+      })
+    )
+  );
+}
+
+function DiagramNode({ node, data, selected, dimmed, onClick, status }) {
+  const cls = ["dnode"];
+  if (selected) cls.push("selected");
+  if (dimmed) cls.push("dimmed");
+  if (status && status !== "unchanged") cls.push(`status-${status}`);
+  return React.createElement("div", {
+    className: cls.join(" "),
+    style: { left: node.x, top: node.y },
+    onClick: (e) => { e.stopPropagation(); onClick(node.id); }
+  },
+    status && status !== "unchanged" && React.createElement("span", { className: `change-badge ${status}` }, status),
+    data.incomplete && React.createElement("div", { className: "incomplete-dot", title: "Not yet implemented" }),
+    React.createElement("div", { className: "dnode-title" }, data.title),
+    React.createElement("div", { className: "dnode-sub" }, data.sub)
+  );
+}
+
+function EdgePopover({ edge, onClose }) {
+  return React.createElement("div", { className: "modal-backdrop", onClick: onClose },
+    React.createElement("div", {
+      className: "modal-box",
+      onClick: (e) => e.stopPropagation()
+    },
+      React.createElement("div", { className: "modal-title" }, edge.label),
+      React.createElement("div", { style: { color: "var(--text-muted)", lineHeight: 1.5 } }, edge.desc)
+    )
+  );
+}
+
+function Diagram({ scene, selectedNode, onSelectNode, hoveredNode, onHoverNode }) {
+  const [edgePopover, setEdgePopover] = useState(null);
+  const [epPopover, setEpPopover] = useState(null);
+  const containerRef = useRef(null);
+  const [containerSize, setContainerSize] = useState(null);
+  const sceneData = VIEWER.scenes[scene];
+
+  useEffect(() => {
+    const handler = () => { setEdgePopover(null); setEpPopover(null); };
+    window.addEventListener("close-popover", handler);
+    return () => window.removeEventListener("close-popover", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    /* Read size immediately on mount */
+    const rect = containerRef.current.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) setContainerSize({ w: rect.width, h: rect.height });
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect;
+      if (width > 0 && height > 0) setContainerSize({ w: width, h: height });
+    });
+    ro.observe(containerRef.current);
+    return () => ro.disconnect();
+  }, []);
+  if (!sceneData) return null;
+
+  const nodeMap = {};
+  sceneData.nodes.forEach(n => { nodeMap[n.id] = n; });
+
+  /* Compute effective layout: endpoint cards become part of each node's bounding box.
+     Full 2D overlap resolution, then expose effective heights for edge/label passes. */
+  const { nodeEndpoints, adjustedNodes, adjustedW, adjustedH, effHeights, cardH: epCardH } = useMemo(() => {
+    /* 1. Group endpoints by from-node */
+    const epMap = {};
+    sceneData.edges.forEach(e => {
+      if (!e.endpoints) return;
+      if (!epMap[e.from]) epMap[e.from] = [];
+      e.endpoints.forEach(ep => epMap[e.from].push({ ...ep, _fromId: e.from, _toId: e.to }));
+    });
+    const rFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 13;
+    const nW = NODE_REM_W * rFs;
+    const nH = NODE_REM_H * rFs;
+    const cH = rFs * 2.6;
+    const gap = 14;
+
+    /* 2. Effective height per node = node box + endpoint cards */
+    const eff = {};
+    sceneData.nodes.forEach(n => {
+      const cards = (epMap[n.id] || []).length;
+      eff[n.id] = nH + (cards > 0 ? cards * cH + 6 : 0);
+    });
+
+    /* 3. Clone nodes and resolve vertical overlaps iteratively.
+       Node X positions from the scene config are preserved — the label
+       placement algorithm handles fitting labels in available space. */
+    const adj = sceneData.nodes.map(n => ({ ...n }));
+
+    /* 3b. Resolve vertical overlaps iteratively */
+    for (let pass = 0; pass < 20; pass++) {
+      let changed = false;
+      adj.sort((a, b) => a.y - b.y || a.x - b.x);
+      for (let i = 0; i < adj.length; i++) {
+        for (let j = i + 1; j < adj.length; j++) {
+          const a = adj[i], b = adj[j];
+          /* Skip if no horizontal overlap */
+          if (a.x >= b.x + nW + gap || b.x >= a.x + nW + gap) continue;
+          /* Push b down if it overlaps a's effective bbox */
+          const aBottom = a.y + eff[a.id] + gap;
+          if (b.y < aBottom) {
+            b.y = aBottom;
+            changed = true;
+          }
+        }
+      }
+      if (!changed) break;
+    }
+
+    /* 4. Compute scene dimensions from adjusted positions */
+    let maxX = 0;
+    let maxY = 0;
+    adj.forEach(n => {
+      const bottom = n.y + eff[n.id];
+      if (bottom > maxY) maxY = bottom;
+      const right = n.x + nW;
+      if (right > maxX) maxX = right;
+    });
+    return {
+      nodeEndpoints: epMap,
+      adjustedNodes: adj,
+      adjustedW: maxX + 20,
+      adjustedH: maxY + 40,
+      effHeights: eff,
+      cardH: cH
+    };
+  }, [scene]);
+
+  /* Build adjusted nodeMap for edge routing */
+  const adjNodeMap = {};
+  adjustedNodes.forEach(n => { adjNodeMap[n.id] = n; });
+
+  // Determine full connected path from hovered node (BFS through all edges)
+  const connectedToHover = useMemo(() => {
+    if (!hoveredNode) return null;
+    const set = new Set([hoveredNode]);
+    const queue = [hoveredNode];
+    while (queue.length > 0) {
+      const cur = queue.shift();
+      sceneData.edges.forEach(e => {
+        if (e.from === cur && !set.has(e.to)) { set.add(e.to); queue.push(e.to); }
+        if (e.to === cur && !set.has(e.from)) { set.add(e.from); queue.push(e.from); }
+      });
+    }
+    return set;
+  }, [hoveredNode, scene]);
+
+  const handleBgClick = useCallback(() => {
+    if (edgePopover || epPopover) { setEdgePopover(null); setEpPopover(null); return; }
+    if (selectedNode) onSelectNode(null);
+  }, [selectedNode, onSelectNode, edgePopover, epPopover]);
+
+  /* Compute actual node dimensions from CSS rem */
+  const rootFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 14;
+  const nodeW = NODE_REM_W * rootFs;
+  const nodeH = NODE_REM_H * rootFs;
+
+  /* Position nodes as percentages of the container */
+  const sceneW = adjustedW;
+  const sceneH = adjustedH + 40;
+  const cw = containerSize ? containerSize.w : sceneW;
+  const ch = containerSize ? containerSize.h : sceneH;
+  /* Scale: fit scene to container. Allow up to 1.3x for sparse scenes. */
+  const sx = cw / sceneW;
+  const sy = ch / sceneH;
+  const scale = Math.min(sx, sy, 1.3) * 0.92;
+  const padX = (cw - sceneW * scale) / 2;
+  /* Vertical padding: use sy-based scale so it stays stable when only width changes (sidebar) */
+  const vScale = Math.min(sy, 1.3) * 0.92;
+  const padY = Math.max(16, (ch - sceneH * vScale) / 2);
+  /* Helper: convert scene x,y to container x,y */
+  const tx = (x) => padX + x * scale;
+  const ty = (y) => padY + y * scale;
+  const tw = (w) => w * scale;
+
+  return React.createElement("div", {
+    className: "diagram-container",
+    ref: containerRef,
+    onClick: handleBgClick
+  },
+  React.createElement("div", {
+    style: { position: "absolute", inset: 0 }
+  },
+    // SVG edges
+    React.createElement("svg", {
+      className: "edge-layer",
+      width: cw,
+      height: ch,
+      style: { overflow: "visible" }
+    },
+      React.createElement("defs", null,
+        React.createElement("marker", {
+          id: "arrowhead", markerWidth: 8, markerHeight: 6, refX: 8, refY: 3, orient: "auto"
+        },
+          React.createElement("polygon", { points: "0 0, 8 3, 0 6", fill: "var(--text-muted)" })
+        ),
+        React.createElement("marker", {
+          id: "arrowhead-dim", markerWidth: 8, markerHeight: 6, refX: 8, refY: 3, orient: "auto"
+        },
+          React.createElement("polygon", { points: "0 0, 8 3, 0 6", fill: "var(--text-muted)", opacity: 0.2 })
+        ),
+        React.createElement("filter", { id: "dot-glow", x: "-50%", y: "-50%", width: "200%", height: "200%" },
+          React.createElement("feGaussianBlur", { stdDeviation: "1.5", result: "blur" }),
+          React.createElement("feMerge", null,
+            React.createElement("feMergeNode", { in: "blur" }),
+            React.createElement("feMergeNode", { in: "SourceGraphic" })
+          )
+        )
+      ),
+      (() => {
+        /* Pre-compute all routes, then assign colors based on shared source node */
+        const routes = sceneData.edges.map((edge, i) => {
+          const fromNode = adjNodeMap[edge.from];
+          const toNode = adjNodeMap[edge.to];
+          if (!fromNode || !toNode) return null;
+          const tfn = { x: tx(fromNode.x), y: ty(fromNode.y), w: nodeW, h: nodeH };
+          const ttn = { x: tx(toNode.x), y: ty(toNode.y), w: nodeW, h: nodeH };
+          const route = routeEdge(tfn, ttn);
+          return { edge, i, route };
+        }).filter(Boolean);
+        /* Assign alternating colors globally so crossing edges are distinguishable */
+        routes.forEach((r, idx) => {
+          r.colorIdx = idx;
+        });
+        return routes.flatMap(r => {
+          const dimmed = hoveredNode && connectedToHover && !connectedToHover.has(r.edge.from) && !connectedToHover.has(r.edge.to);
+          const edgeColor = r.colorIdx % 2 === 0 ? "var(--edge-a)" : "var(--edge-b)";
+          const onEdgeClick = (e) => {
+            e.stopPropagation();
+            setEdgePopover({ edge: r.edge });
+          };
+          const pathEl = React.createElement("path", {
+            key: "p-" + r.i,
+            d: r.route.path,
+            fill: "none",
+            stroke: edgeColor,
+            strokeWidth: dimmed ? 1 : 1.2,
+            markerEnd: dimmed ? "url(#arrowhead-dim)" : "url(#arrowhead)",
+            className: dimmed ? "dimmed" : "",
+            onClick: onEdgeClick
+          });
+          const dur = Math.max(2, Math.min(5, edgePathLength(r.route) / 120));
+          const stagger = r.i * 0.5;
+          const dotEl = React.createElement("circle", {
+            key: "dot-" + r.i,
+            r: 2.5,
+            className: dimmed ? "flow-dot dimmed-dot" : "flow-dot",
+            fill: dimmed ? "none" : edgeColor,
+            filter: dimmed ? "none" : "url(#dot-glow)",
+            onClick: onEdgeClick
+          },
+            !dimmed && React.createElement("animateMotion", {
+              dur: dur + "s",
+              repeatCount: "indefinite",
+              path: r.route.path,
+              begin: stagger + "s"
+            }),
+            !dimmed && React.createElement("animate", {
+              attributeName: "opacity",
+              values: "0;0.9;0.9;0",
+              keyTimes: "0;0.08;0.88;1",
+              dur: dur + "s",
+              repeatCount: "indefinite",
+              begin: stagger + "s"
+            })
+          );
+          return [pathEl, dotEl];
+        });
+      })()
+    ),
+
+    // Edge labels — placed at midpoint, nudged to avoid OTHER nodes (not own endpoints)
+    (() => {
+      const allNodeBoxes = adjustedNodes.map(n => ({
+        id: n.id, x: tx(n.x), y: ty(n.y), w: nodeW, h: nodeH + (n.epCount || 0) * 28
+      }));
+      const rFs = parseFloat(getComputedStyle(document.documentElement).fontSize) || 13;
+      return sceneData.edges.map((edge, i) => {
+      const fromNode = adjNodeMap[edge.from];
+      const toNode = adjNodeMap[edge.to];
+      if (!fromNode || !toNode) return null;
+      const tfn = { x: tx(fromNode.x), y: ty(fromNode.y), w: nodeW, h: nodeH };
+      const ttn = { x: tx(toNode.x), y: ty(toNode.y), w: nodeW, h: nodeH };
+      const route = routeEdge(tfn, ttn);
+      const lw = (edge.label || "").length * rFs * 0.55 + 14;
+      const obstacles = allNodeBoxes.filter(n => n.id !== edge.from && n.id !== edge.to);
+      const pos = edgeLabelPoint(route, obstacles, lw / 2);
+      const dimmed = hoveredNode && connectedToHover && !connectedToHover.has(edge.from) && !connectedToHover.has(edge.to);
+      return React.createElement("div", {
+        key: `label-${i}`,
+        className: `edge-label ${dimmed ? "dimmed" : ""}`,
+        style: { left: Math.round(pos.x), top: Math.round(pos.y) },
+        onClick: (e) => {
+          e.stopPropagation();
+          setEdgePopover({ edge });
+        }
+      }, edge.label);
+    }).filter(Boolean);
+    })(),
+
+    // Nodes + endpoint cards below each node
+    (() => {
+      return adjustedNodes.flatMap(node => {
+        const data = VIEWER.nodes[node.id];
+        if (!data) return [];
+        const dimmed = hoveredNode && connectedToHover && !connectedToHover.has(node.id);
+        const els = [];
+        els.push(React.createElement(DiagramNode, {
+          key: node.id,
+          node: { ...node, x: tx(node.x), y: ty(node.y) },
+          data,
+          selected: selectedNode === node.id,
+          dimmed,
+          onClick: onSelectNode,
+          status: node.status
+        }));
+        /* Endpoint cards below this node */
+        const eps = nodeEndpoints[node.id] || [];
+        eps.forEach((ep, j) => {
+          els.push(React.createElement("div", {
+            key: `ep-${node.id}-${j}`,
+            className: `endpoint-card ${dimmed ? "dimmed" : ""}`,
+            style: { left: tx(node.x), top: ty(node.y) + nodeH + 4 + j * (epCardH || rootFs * 2.6) },
+            onClick: (e) => {
+              e.stopPropagation();
+              const fullEp = findFullEndpoint(ep.method, ep.path, ep._fromId, ep._toId);
+              setEpPopover({ ep, fullEp });
+            }
+          },
+            React.createElement("div", { className: "ep-head" },
+              React.createElement("span", { className: `ep-method ${ep.method}` }, ep.method),
+              React.createElement("span", { className: "ep-path" }, ep.path)
+            ),
+            (ep.in || ep.out) && React.createElement("div", { className: "ep-io" },
+              ep.in && React.createElement("span", { className: "ep-in" }, ep.in),
+              ep.in && ep.out && " ",
+              ep.out && React.createElement("span", { className: "ep-out" }, ep.out)
+            )
+          ));
+        });
+        return els;
+      });
+    })(),
+
+    // Scene notes
+    sceneData.notes && React.createElement("div", {
+      style: {
+        position: "absolute", bottom: 8, left: 0, right: 0, fontSize: "var(--text-xs)",
+        color: "var(--text-muted)", fontFamily: "var(--font-mono)", textAlign: "center", padding: "0 16px"
+      }
+    }, sceneData.notes),
+
+    null
+  ),
+  // Edge popover — OUTSIDE the scaled div so position:fixed works
+  edgePopover && ReactDOM.createPortal(
+    React.createElement(EdgePopover, {
+      edge: edgePopover.edge,
+      onClose: () => setEdgePopover(null)
+    }),
+    document.body
+  ),
+  // Endpoint detail popover
+  epPopover && ReactDOM.createPortal(
+    React.createElement(EndpointDetailPopover, {
+      ep: epPopover.ep,
+      fullEp: epPopover.fullEp,
+      onClose: () => setEpPopover(null)
+    }),
+    document.body
+  )
+  );
+}
+
+function SearchOverlay({ onClose, onSelect }) {
+  const [query, setQuery] = useState("");
+  const inputRef = useRef(null);
+
+  useEffect(() => { inputRef.current && inputRef.current.focus(); }, []);
+
+  const results = useMemo(() => {
+    if (!query.trim()) return [];
+    const q = query.toLowerCase();
+    const matches = [];
+    Object.entries(VIEWER.nodes).forEach(([id, data]) => {
+      const searchText = [
+        data.title, data.sub, data.description,
+        ...(data.endpoints || []).map(e => e.path),
+        ...(data.functions || []).map(f => f.name),
+        ...(data.notes || [])
+      ].join(" ").toLowerCase();
+      if (searchText.includes(q)) {
+        matches.push({ id, title: data.title, sub: data.sub || data.category });
+      }
+    });
+    return matches.slice(0, 15);
+  }, [query]);
+
+  return React.createElement("div", { className: "search-overlay", onClick: onClose },
+    React.createElement("div", { className: "search-box", onClick: e => e.stopPropagation() },
+      React.createElement("input", {
+        ref: inputRef,
+        className: "search-input",
+        placeholder: "Search nodes, endpoints, functions...",
+        value: query,
+        onChange: e => setQuery(e.target.value),
+        onKeyDown: e => {
+          if (e.key === "Escape") onClose();
+          if (e.key === "Enter" && results.length > 0) { onSelect(results[0].id); onClose(); }
+        }
+      }),
+      React.createElement("div", { className: "search-results" },
+        results.map(r => React.createElement("div", {
+          key: r.id, className: "search-result",
+          onClick: () => { onSelect(r.id); onClose(); }
+        },
+          React.createElement("div", { className: "search-result-title" }, r.title),
+          React.createElement("div", { className: "search-result-sub" }, r.sub)
+        ))
+      )
+    )
+  );
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────────────────────────
+
+function App() {
+  const firstTab = VIEWER.tabs[0] ? VIEWER.tabs[0].id : "";
+  const firstScene = Object.keys(VIEWER.scenes)[0] || "";
+  const [tab, setTab] = useState(firstTab);
+  const [scene, setScene] = useState(firstScene);
+  const [selectedNode, setSelectedNode] = useState(null);
+  const [hoveredNode, setHoveredNode] = useState(null);
+  const [showSearch, setShowSearch] = useState(false);
+
+  const tabs = VIEWER.tabs;
+
+  const scenesForTab = useMemo(() => {
+    return Object.entries(VIEWER.scenes)
+      .filter(([, s]) => s.tab === tab)
+      .map(([id, s]) => ({ id, label: s.label }));
+  }, [tab]);
+
+  // Update scene when tab changes
+  const handleTabChange = useCallback((t) => {
+    setTab(t);
+    setSelectedNode(null);
+    const firstScene = Object.entries(VIEWER.scenes).find(([, s]) => s.tab === t);
+    if (firstScene) setScene(firstScene[0]);
+  }, []);
+
+  // Handle URL hash — restore state on load AND on popstate (back button)
+  const restoreFromHash = useCallback(() => {
+    const hash = window.location.hash.slice(1);
+    if (hash) {
+      const parts = hash.split("/");
+      if (parts[0] && VIEWER.scenes[parts[0]]) {
+        const s = VIEWER.scenes[parts[0]];
+        setTab(s.tab);
+        setScene(parts[0]);
+        if (parts[1] && VIEWER.nodes[parts[1]]) setSelectedNode(parts[1]);
+        return;
+      }
+    }
+    /* Fallback: restore from sessionStorage */
+    try {
+      const saved = JSON.parse(sessionStorage.getItem("arch-viewer-state"));
+      if (saved && VIEWER.scenes[saved.scene]) {
+        setTab(saved.tab);
+        setScene(saved.scene);
+        if (saved.selectedNode) setSelectedNode(saved.selectedNode);
+      }
+    } catch(e) {}
+  }, []);
+  useEffect(() => { restoreFromHash(); }, []);
+  useEffect(() => {
+    window.addEventListener("popstate", restoreFromHash);
+    window.addEventListener("hashchange", restoreFromHash);
+    return () => {
+      window.removeEventListener("popstate", restoreFromHash);
+      window.removeEventListener("hashchange", restoreFromHash);
+    };
+  }, [restoreFromHash]);
+
+  useEffect(() => {
+    let hash = scene;
+    if (selectedNode) hash += "/" + selectedNode;
+    window.location.hash = hash;
+    /* Persist to sessionStorage so state survives link navigation + back */
+    try { sessionStorage.setItem("arch-viewer-state", JSON.stringify({ tab, scene, selectedNode })); } catch(e) {}
+  }, [tab, scene, selectedNode]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.key === "Escape") {
+        if (showSearch) { setShowSearch(false); return; }
+        /* Check if a modal is open — close that first, keep sidebar */
+        const backdrop = document.querySelector(".modal-backdrop");
+        if (backdrop) { window.dispatchEvent(new CustomEvent("close-popover")); return; }
+        setSelectedNode(null);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setShowSearch(s => !s);
+      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const idx = scenesForTab.findIndex(s => s.id === scene);
+        if (e.key === "ArrowLeft" && idx > 0) setScene(scenesForTab[idx - 1].id);
+        if (e.key === "ArrowRight" && idx < scenesForTab.length - 1) setScene(scenesForTab[idx + 1].id);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [showSearch, scene, scenesForTab]);
+
+  const handleSelectNode = useCallback((id) => {
+    setSelectedNode(prev => prev === id ? null : id);
+  }, []);
+
+  // For search: find best scene for a node
+  const handleSearchSelect = useCallback((nodeId) => {
+    // Find a scene that contains this node (prefer current tab)
+    let bestScene = null;
+    Object.entries(VIEWER.scenes).forEach(([sid, s]) => {
+      if (s.nodes.some(n => n.id === nodeId)) {
+        if (!bestScene || s.tab === tab) bestScene = sid;
+      }
+    });
+    if (bestScene) {
+      setTab(VIEWER.scenes[bestScene].tab);
+      setScene(bestScene);
+    }
+    setSelectedNode(nodeId);
+  }, [tab]);
+
+  // Hover handling
+  const diagramRef = useRef(null);
+  useEffect(() => {
+    const el = diagramRef.current;
+    if (!el) return;
+    const onOver = (e) => {
+      const node = e.target.closest(".dnode");
+      if (node) {
+        const nodeId = node.querySelector(".dnode-title")?.textContent;
+        // Find node id by matching title
+        const sceneData = VIEWER.scenes[scene];
+        if (sceneData) {
+          const found = sceneData.nodes.find(n => VIEWER.nodes[n.id]?.title === nodeId);
+          if (found) setHoveredNode(found.id);
+        }
+      } else {
+        setHoveredNode(null);
+      }
+    };
+    const onOut = (e) => {
+      if (!e.target.closest(".dnode")) setHoveredNode(null);
+    };
+    el.addEventListener("mouseover", onOver);
+    el.addEventListener("mouseout", onOut);
+    return () => { el.removeEventListener("mouseover", onOver); el.removeEventListener("mouseout", onOut); };
+  }, [scene]);
+
+  return React.createElement("div", { className: "app" },
+    // Tab bar
+    React.createElement("div", { className: "tab-bar" },
+      tabs.map(t => React.createElement("button", {
+        key: t.id,
+        className: `tab-btn ${tab === t.id ? "active" : ""}`,
+        onClick: () => handleTabChange(t.id)
+      }, t.label))
+    ),
+
+    // Scene bar
+    scenesForTab.length > 1 && React.createElement("div", { className: "scene-bar" },
+      scenesForTab.map(s => React.createElement("button", {
+        key: s.id,
+        className: `scene-btn ${scene === s.id ? "active" : ""}`,
+        onClick: () => { setScene(s.id); setSelectedNode(null); }
+      }, s.label))
+    ),
+
+    // Workspace
+    React.createElement("div", { className: "workspace" },
+      React.createElement("div", { className: "diagram-area", ref: diagramRef },
+        React.createElement(Diagram, {
+          scene, selectedNode, onSelectNode: handleSelectNode,
+          hoveredNode, onHoverNode: setHoveredNode
+        })
+      ),
+      selectedNode && React.createElement(DetailPanel, {
+        nodeId: selectedNode,
+        onClose: () => setSelectedNode(null)
+      })
+    ),
+
+    // Search
+    showSearch && React.createElement(SearchOverlay, {
+      onClose: () => setShowSearch(false),
+      onSelect: handleSearchSelect
+    }),
+
+    null
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PUBLIC API — call this with your config to create an architecture viewer
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function createArchitectureViewer(config) {
+  VIEWER = {
+    title:  config.title || "Architecture Viewer",
+    tabs:   config.tabs || [],
+    nodes:  config.nodes || {},
+    scenes: config.scenes || {},
+    links:  { files: [], issues: [], ...(config.links || {}) }
+  };
+  document.title = VIEWER.title;
+  ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+}
+
+// ═══ CALL createArchitectureViewer() HERE ═══
+// createArchitectureViewer({ title, tabs, nodes, scenes, links });
+</script>
+</body>
+</html>
