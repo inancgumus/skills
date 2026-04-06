@@ -108,6 +108,13 @@ Read `references/config-schema.md` for the full schema. Key rules:
 - `files[]` links to source code (if applicable)
 - `endpoints[]` on nodes have full schema (headers, request/response body, status codes)
 - `notes[]` for important context that doesn't fit elsewhere
+- `functions[]` — every function entry should include a `file` field with the exact file path and line number (e.g. `"pkg/server.go:42"`). Use `grep -n "^func "` on the source to find real line numbers. This makes each function name a clickable link to the source in the detail panel.
+
+**File links and line numbers:**
+- The `links.files[].baseUrl` is prepended to every path in `files[]` and `functions[].file`. The engine appends `#L<line>` for `path:line` references.
+- When diagramming code on a specific git branch (not `main`), set `baseUrl` to include the branch: `"https://github.com/org/repo/blob/<branch>/"`, and use relative paths from the repo root in `files[]` and `functions[].file`.
+- When diagramming code across multiple branches, set `baseUrl` to `"https://github.com/org/repo/blob/"` and prefix every path with the branch name: `"my-branch/pkg/server.go:42"`. This produces correct per-branch links.
+- Always find real line numbers from the source (`grep -n`). Never guess or use placeholder line numbers.
 
 ### 5. Build the HTML file
 
@@ -161,6 +168,8 @@ Before outputting, verify:
 - At least one scene per tab
 - The first scene in each tab is a good overview
 - **Names come from the actual code.** Node titles, edge labels, function names, and file paths must match what exists in the codebase. Never invent names like "CacheManager" when the code calls it `cache.go` with a `func EnsureDocs()`. Read the source to find the real names — types, functions, packages, filenames. If there's no obvious name, use the filename or package name, not a made-up CamelCase noun.
+- **Every function has a source link.** Every entry in `functions[]` must include a `file` field with `path:line` pointing to the actual definition. Run `grep -n "^func "` (or equivalent) on each source file to collect line numbers. Do not omit the `file` field or use approximate line numbers.
+- **File links resolve correctly for the branch.** If diagramming code on non-default branches, verify that `links.files[].baseUrl` combined with the paths in `files[]` and `functions[].file` produces working URLs. Test by constructing one full URL mentally before generating.
 
 ## Example: minimal config
 
@@ -177,6 +186,11 @@ const NODE_DATA = {
     title: "API Server", sub: "api/main.go",
     category: "Backend",
     description: "REST API handling business logic.",
+    files: ["api/main.go"],
+    functions: [
+      { name: "HandleRequest", sig: "(w http.ResponseWriter, r *http.Request)", desc: "Routes incoming HTTP requests", file: "api/main.go:42" },
+      { name: "CreateUser", sig: "(ctx context.Context, email string) (int, error)", desc: "Creates a new user", file: "api/main.go:87" }
+    ],
     endpoints: [
       { method: "POST", path: "/api/users", requestBody: [{ name: "email", type: "string", desc: "User email" }], responseBody: [{ name: "id", type: "int", desc: "Created user ID" }], statusCodes: [{ code: "201", desc: "Created" }] }
     ]
