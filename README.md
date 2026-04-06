@@ -21,6 +21,19 @@ npx skills add inancgumus/skills
 npx skills add inancgumus/skills --skill slack
 ```
 
+## Development
+
+For local development, symlink the skills from this repo into `~/.agents/skills/` so edits are always in sync:
+
+```bash
+git clone git@github.com:inancgumus/skills.git ~/dev/skills
+cd ~/dev/skills
+./install.sh            # symlink all skills
+./install.sh flowchart  # or just one
+```
+
+The script is idempotent — run it after cloning on a new machine, or after adding a new skill.
+
 ## Requirements
 
 **slack**
