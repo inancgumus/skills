@@ -8,9 +8,22 @@ createArchitectureViewer({
   tabs:   Tab[],              // Tab definitions
   nodes:  { [id]: Node },     // All node definitions (keyed by unique ID)
   scenes: { [id]: Scene },    // All scene definitions (keyed by unique ID)
-  links:  Links               // URL patterns for files and issues
+  links:  Links,              // URL patterns for files and issues
+  theme:  "string"            // Optional: default theme ID (e.g. "catppuccin-mocha", "tokyo-night")
 })
 ```
+
+## Theme
+
+Optional. Sets the default colorscheme. The user can switch themes at runtime via a dropdown. Choice persists in localStorage.
+
+34 themes available, grouped in the picker dropdown:
+
+**Dark (23):** `catppuccin-mocha`, `catppuccin-frappe`, `catppuccin-macchiato`, `tokyo-night`, `tokyo-night-storm`, `tokyonight-moon`, `gruvbox-dark`, `nord`, `dracula`, `one-dark`, `solarized-dark`, `rose-pine`, `rose-pine-moon`, `kanagawa`, `everforest-dark`, `nightfox`, `carbonfox`, `github-dark`, `ayu-dark`, `ayu-mirage`, `monokai-pro`, `material-deep-ocean`, `palenight`
+
+**Light (11):** `catppuccin-latte`, `tokyo-night-light`, `gruvbox-light`, `solarized-light`, `rose-pine-dawn`, `everforest-light`, `one-light`, `github-light`, `ayu-light`, `dayfox`, `kanagawa-lotus`
+
+If omitted, the viewer uses its built-in dark style (close to One Dark).
 
 ## Tab
 

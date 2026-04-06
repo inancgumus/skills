@@ -271,12 +271,101 @@ a:hover { text-decoration: underline; }
 .search-result-sub { font-size: var(--text-xs); color: var(--text-muted); font-family: var(--font-mono); }
 
 /* Keyboard hint */
+
+/* Theme picker */
+.theme-picker {
+  position: relative; margin-left: auto; display: flex; align-items: center;
+}
+.theme-picker-btn {
+  padding: 6px 12px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); color: var(--text-muted); font-family: inherit;
+  font-size: var(--text-xs); cursor: pointer; white-space: nowrap;
+}
+.theme-picker-btn:hover { color: var(--text); border-color: var(--text-muted); }
+.theme-dropdown {
+  position: absolute; top: 100%; right: 0; margin-top: 4px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  min-width: 180px; max-height: 320px; overflow-y: auto; z-index: 60;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.theme-option {
+  padding: 6px 12px; cursor: pointer; font-size: var(--text-sm);
+  color: var(--text-muted); display: flex; align-items: center; gap: 8px;
+}
+.theme-option:hover { background: var(--surface-hover); color: var(--text); }
+.theme-option.active { color: var(--accent); }
+.theme-swatch {
+  width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0;
+  border: 1px solid rgba(128,128,128,0.3);
+}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// THEMES — popular vim/neovim colorschemes
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const THEMES = {
+  // ─── Dark ───
+  "catppuccin-mocha": { group: "dark", label: "Catppuccin Mocha", vars: { "bg": "#1e1e2e", "surface": "#313244", "surface-hover": "#45475a", "border": "#585b70", "text": "#cdd6f4", "text-muted": "#a6adc8", "accent": "#cba6f7", "method-get": "#a6e3a1", "method-post": "#89b4fa", "method-put": "#f9e2af", "method-delete": "#f38ba8", "new": "#a6e3a1", "changed": "#cba6f7", "removed": "#f38ba8", "edge-a": "#f5c2e7", "edge-b": "#89b4fa" } },
+  "catppuccin-frappe": { group: "dark", label: "Catppuccin Frapp\u00e9", vars: { "bg": "#303446", "surface": "#414559", "surface-hover": "#51576d", "border": "#626880", "text": "#c6d0f5", "text-muted": "#a5adce", "accent": "#ca9ee6", "method-get": "#a6d189", "method-post": "#8caaee", "method-put": "#e5c890", "method-delete": "#e78284", "new": "#a6d189", "changed": "#ca9ee6", "removed": "#e78284", "edge-a": "#f4b8e4", "edge-b": "#85c1dc" } },
+  "catppuccin-macchiato": { group: "dark", label: "Catppuccin Macchiato", vars: { "bg": "#24273a", "surface": "#363a4f", "surface-hover": "#494d64", "border": "#5b6078", "text": "#cad3f5", "text-muted": "#a5adcb", "accent": "#c6a0f6", "method-get": "#a6da95", "method-post": "#8aadf4", "method-put": "#eed49f", "method-delete": "#ed8796", "new": "#a6da95", "changed": "#c6a0f6", "removed": "#ed8796", "edge-a": "#f5bde6", "edge-b": "#7dc4e4" } },
+  "tokyo-night": { group: "dark", label: "Tokyo Night", vars: { "bg": "#1a1b26", "surface": "#16161e", "surface-hover": "#292e42", "border": "#414868", "text": "#c0caf5", "text-muted": "#565f89", "accent": "#bb9af7", "method-get": "#9ece6a", "method-post": "#7aa2f7", "method-put": "#e0af68", "method-delete": "#f7768e", "new": "#9ece6a", "changed": "#bb9af7", "removed": "#f7768e", "edge-a": "#bb9af7", "edge-b": "#7dcfff" } },
+  "tokyo-night-storm": { group: "dark", label: "Tokyo Night Storm", vars: { "bg": "#24283b", "surface": "#1f2335", "surface-hover": "#292e42", "border": "#3b4261", "text": "#c0caf5", "text-muted": "#545c7e", "accent": "#ff007c", "method-get": "#9ece6a", "method-post": "#7aa2f7", "method-put": "#e0af68", "method-delete": "#f7768e", "new": "#9ece6a", "changed": "#ff007c", "removed": "#f7768e", "edge-a": "#ff007c", "edge-b": "#7dcfff" } },
+  "tokyonight-moon": { group: "dark", label: "Tokyo Night Moon", vars: { "bg": "#222436", "surface": "#1e2030", "surface-hover": "#2f334d", "border": "#3b4261", "text": "#c8d3f5", "text-muted": "#636da6", "accent": "#c099ff", "method-get": "#c3e88d", "method-post": "#82aaff", "method-put": "#ffc777", "method-delete": "#ff757f", "new": "#c3e88d", "changed": "#c099ff", "removed": "#ff757f", "edge-a": "#fca7ea", "edge-b": "#86e1fc" } },
+  "gruvbox-dark": { group: "dark", label: "Gruvbox Dark", vars: { "bg": "#282828", "surface": "#3c3836", "surface-hover": "#504945", "border": "#665c54", "text": "#ebdbb2", "text-muted": "#928374", "accent": "#fe8019", "method-get": "#b8bb26", "method-post": "#83a598", "method-put": "#fabd2f", "method-delete": "#fb4934", "new": "#b8bb26", "changed": "#fe8019", "removed": "#fb4934", "edge-a": "#fe8019", "edge-b": "#8ec07c" } },
+  "nord": { group: "dark", label: "Nord", vars: { "bg": "#2e3440", "surface": "#3b4252", "surface-hover": "#434c5e", "border": "#4c566a", "text": "#d8dee9", "text-muted": "#7b88a1", "accent": "#88c0d0", "method-get": "#a3be8c", "method-post": "#81a1c1", "method-put": "#ebcb8b", "method-delete": "#bf616a", "new": "#a3be8c", "changed": "#88c0d0", "removed": "#bf616a", "edge-a": "#b48ead", "edge-b": "#88c0d0" } },
+  "dracula": { group: "dark", label: "Dracula", vars: { "bg": "#282a36", "surface": "#44475a", "surface-hover": "#515473", "border": "#6272a4", "text": "#f8f8f2", "text-muted": "#6272a4", "accent": "#ff79c6", "method-get": "#50fa7b", "method-post": "#bd93f9", "method-put": "#f1fa8c", "method-delete": "#ff5555", "new": "#50fa7b", "changed": "#ff79c6", "removed": "#ff5555", "edge-a": "#ff79c6", "edge-b": "#8be9fd" } },
+  "one-dark": { group: "dark", label: "One Dark", vars: { "bg": "#282c34", "surface": "#21252b", "surface-hover": "#2c313a", "border": "#3e4452", "text": "#abb2bf", "text-muted": "#5c6370", "accent": "#c678dd", "method-get": "#98c379", "method-post": "#61afef", "method-put": "#e5c07b", "method-delete": "#e06c75", "new": "#98c379", "changed": "#c678dd", "removed": "#e06c75", "edge-a": "#c678dd", "edge-b": "#56b6c2" } },
+  "solarized-dark": { group: "dark", label: "Solarized Dark", vars: { "bg": "#002b36", "surface": "#073642", "surface-hover": "#0a4050", "border": "#586e75", "text": "#839496", "text-muted": "#586e75", "accent": "#b58900", "method-get": "#859900", "method-post": "#268bd2", "method-put": "#b58900", "method-delete": "#dc322f", "new": "#859900", "changed": "#b58900", "removed": "#dc322f", "edge-a": "#b58900", "edge-b": "#2aa198" } },
+  "rose-pine": { group: "dark", label: "Ros\u00e9 Pine", vars: { "bg": "#191724", "surface": "#1f1d2e", "surface-hover": "#26233a", "border": "#403d52", "text": "#e0def4", "text-muted": "#6e6a86", "accent": "#ebbcba", "method-get": "#9ccfd8", "method-post": "#c4a7e7", "method-put": "#f6c177", "method-delete": "#eb6f92", "new": "#9ccfd8", "changed": "#ebbcba", "removed": "#eb6f92", "edge-a": "#f6c177", "edge-b": "#31748f" } },
+  "rose-pine-moon": { group: "dark", label: "Ros\u00e9 Pine Moon", vars: { "bg": "#232136", "surface": "#2a273f", "surface-hover": "#393552", "border": "#44415a", "text": "#e0def4", "text-muted": "#6e6a86", "accent": "#c4a7e7", "method-get": "#9ccfd8", "method-post": "#c4a7e7", "method-put": "#f6c177", "method-delete": "#eb6f92", "new": "#9ccfd8", "changed": "#c4a7e7", "removed": "#eb6f92", "edge-a": "#ea9a97", "edge-b": "#3e8fb0" } },
+  "kanagawa": { group: "dark", label: "Kanagawa", vars: { "bg": "#1f1f28", "surface": "#2a2a37", "surface-hover": "#363646", "border": "#54546d", "text": "#dcd7ba", "text-muted": "#727169", "accent": "#957fb8", "method-get": "#98bb6c", "method-post": "#7e9cd8", "method-put": "#e6c384", "method-delete": "#c34043", "new": "#98bb6c", "changed": "#957fb8", "removed": "#c34043", "edge-a": "#d27e99", "edge-b": "#7aa89f" } },
+  "everforest-dark": { group: "dark", label: "Everforest Dark", vars: { "bg": "#2d353b", "surface": "#343f44", "surface-hover": "#3d484d", "border": "#56635f", "text": "#d3c6aa", "text-muted": "#859289", "accent": "#a7c080", "method-get": "#a7c080", "method-post": "#7fbbb3", "method-put": "#dbbc7f", "method-delete": "#e67e80", "new": "#a7c080", "changed": "#a7c080", "removed": "#e67e80", "edge-a": "#a7c080", "edge-b": "#83c092" } },
+  "nightfox": { group: "dark", label: "Nightfox", vars: { "bg": "#192330", "surface": "#212e3f", "surface-hover": "#29394f", "border": "#39506d", "text": "#cdcecf", "text-muted": "#738091", "accent": "#c94f6d", "method-get": "#81b29a", "method-post": "#719cd6", "method-put": "#dbc074", "method-delete": "#c94f6d", "new": "#81b29a", "changed": "#c94f6d", "removed": "#c94f6d", "edge-a": "#c94f6d", "edge-b": "#63cdcf" } },
+  "carbonfox": { group: "dark", label: "Carbonfox", vars: { "bg": "#161616", "surface": "#252525", "surface-hover": "#353535", "border": "#484848", "text": "#f2f4f8", "text-muted": "#7b7c7e", "accent": "#ee5396", "method-get": "#25be6a", "method-post": "#78a9ff", "method-put": "#fdce68", "method-delete": "#ee5396", "new": "#25be6a", "changed": "#ee5396", "removed": "#ee5396", "edge-a": "#be95ff", "edge-b": "#33b1ff" } },
+  "github-dark": { group: "dark", label: "GitHub Dark", vars: { "bg": "#0d1117", "surface": "#161b22", "surface-hover": "#1c2128", "border": "#30363d", "text": "#e6edf3", "text-muted": "#8b949e", "accent": "#58a6ff", "method-get": "#3fb950", "method-post": "#58a6ff", "method-put": "#d29922", "method-delete": "#f85149", "new": "#3fb950", "changed": "#58a6ff", "removed": "#f85149", "edge-a": "#bc8cff", "edge-b": "#79c0ff" } },
+  "ayu-dark": { group: "dark", label: "Ayu Dark", vars: { "bg": "#0b0e14", "surface": "#11151c", "surface-hover": "#1a1f29", "border": "#2a2f3a", "text": "#bfbdb6", "text-muted": "#636a76", "accent": "#e6b450", "method-get": "#7fd962", "method-post": "#59c2ff", "method-put": "#e6b450", "method-delete": "#d95757", "new": "#7fd962", "changed": "#e6b450", "removed": "#d95757", "edge-a": "#e6b450", "edge-b": "#73b8ff" } },
+  "ayu-mirage": { group: "dark", label: "Ayu Mirage", vars: { "bg": "#1f2430", "surface": "#242936", "surface-hover": "#2b303b", "border": "#3d4455", "text": "#cccac2", "text-muted": "#707a8c", "accent": "#ffcc66", "method-get": "#87d96c", "method-post": "#73d0ff", "method-put": "#ffcc66", "method-delete": "#f28779", "new": "#87d96c", "changed": "#ffcc66", "removed": "#f28779", "edge-a": "#ffcc66", "edge-b": "#5ccfe6" } },
+  "monokai-pro": { group: "dark", label: "Monokai Pro", vars: { "bg": "#2d2a2e", "surface": "#383539", "surface-hover": "#423f46", "border": "#5b585e", "text": "#fcfcfa", "text-muted": "#939293", "accent": "#ff6188", "method-get": "#a9dc76", "method-post": "#78dce8", "method-put": "#ffd866", "method-delete": "#ff6188", "new": "#a9dc76", "changed": "#ff6188", "removed": "#ff6188", "edge-a": "#ab9df2", "edge-b": "#78dce8" } },
+  "material-deep-ocean": { group: "dark", label: "Material Deep Ocean", vars: { "bg": "#0f111a", "surface": "#181a29", "surface-hover": "#1f2233", "border": "#2b2f40", "text": "#a6accd", "text-muted": "#717cb4", "accent": "#89ddff", "method-get": "#c3e88d", "method-post": "#82aaff", "method-put": "#ffcb6b", "method-delete": "#f07178", "new": "#c3e88d", "changed": "#89ddff", "removed": "#f07178", "edge-a": "#c792ea", "edge-b": "#89ddff" } },
+  "palenight": { group: "dark", label: "Palenight", vars: { "bg": "#292d3e", "surface": "#2f3344", "surface-hover": "#373b4e", "border": "#444866", "text": "#a6accd", "text-muted": "#676e95", "accent": "#c792ea", "method-get": "#c3e88d", "method-post": "#82aaff", "method-put": "#ffcb6b", "method-delete": "#f07178", "new": "#c3e88d", "changed": "#c792ea", "removed": "#f07178", "edge-a": "#c792ea", "edge-b": "#89ddff" } },
+  // ─── Light ───
+  "catppuccin-latte": { group: "light", label: "Catppuccin Latte", vars: { "bg": "#eff1f5", "surface": "#e6e9ef", "surface-hover": "#ccd0da", "border": "#bcc0cc", "text": "#4c4f69", "text-muted": "#6c6f85", "accent": "#8839ef", "method-get": "#40a02b", "method-post": "#1e66f5", "method-put": "#df8e1d", "method-delete": "#d20f39", "new": "#40a02b", "changed": "#8839ef", "removed": "#d20f39", "edge-a": "#ea76cb", "edge-b": "#04a5e5" } },
+  "tokyo-night-light": { group: "light", label: "Tokyo Night Light", vars: { "bg": "#d5d6db", "surface": "#cbccd1", "surface-hover": "#c4c5ca", "border": "#b4b5b9", "text": "#343b58", "text-muted": "#9699a3", "accent": "#965027", "method-get": "#485e30", "method-post": "#34548a", "method-put": "#8f5e15", "method-delete": "#8c4351", "new": "#485e30", "changed": "#965027", "removed": "#8c4351", "edge-a": "#5a4a78", "edge-b": "#166775" } },
+  "gruvbox-light": { group: "light", label: "Gruvbox Light", vars: { "bg": "#fbf1c7", "surface": "#ebdbb2", "surface-hover": "#d5c4a1", "border": "#bdae93", "text": "#3c3836", "text-muted": "#7c6f64", "accent": "#af3a03", "method-get": "#79740e", "method-post": "#076678", "method-put": "#b57614", "method-delete": "#9d0006", "new": "#79740e", "changed": "#af3a03", "removed": "#9d0006", "edge-a": "#af3a03", "edge-b": "#427b58" } },
+  "solarized-light": { group: "light", label: "Solarized Light", vars: { "bg": "#fdf6e3", "surface": "#eee8d5", "surface-hover": "#e4ddc8", "border": "#93a1a1", "text": "#657b83", "text-muted": "#93a1a1", "accent": "#cb4b16", "method-get": "#859900", "method-post": "#268bd2", "method-put": "#b58900", "method-delete": "#dc322f", "new": "#859900", "changed": "#cb4b16", "removed": "#dc322f", "edge-a": "#d33682", "edge-b": "#2aa198" } },
+  "rose-pine-dawn": { group: "light", label: "Ros\u00e9 Pine Dawn", vars: { "bg": "#faf4ed", "surface": "#fffaf3", "surface-hover": "#f2e9e1", "border": "#dfdad9", "text": "#575279", "text-muted": "#9893a5", "accent": "#b4637a", "method-get": "#56949f", "method-post": "#907aa9", "method-put": "#ea9d34", "method-delete": "#b4637a", "new": "#56949f", "changed": "#b4637a", "removed": "#b4637a", "edge-a": "#ea9d34", "edge-b": "#286983" } },
+  "everforest-light": { group: "light", label: "Everforest Light", vars: { "bg": "#fdf6e3", "surface": "#f3ead3", "surface-hover": "#eae4ca", "border": "#d4c8a5", "text": "#5c6a72", "text-muted": "#829181", "accent": "#8da101", "method-get": "#8da101", "method-post": "#5f9b93", "method-put": "#dfa000", "method-delete": "#f85552", "new": "#8da101", "changed": "#8da101", "removed": "#f85552", "edge-a": "#93b259", "edge-b": "#35a77c" } },
+  "one-light": { group: "light", label: "One Light", vars: { "bg": "#fafafa", "surface": "#f0f0f0", "surface-hover": "#e5e5e6", "border": "#d4d4d4", "text": "#383a42", "text-muted": "#a0a1a7", "accent": "#a626a4", "method-get": "#50a14f", "method-post": "#4078f2", "method-put": "#c18401", "method-delete": "#e45649", "new": "#50a14f", "changed": "#a626a4", "removed": "#e45649", "edge-a": "#a626a4", "edge-b": "#0184bc" } },
+  "github-light": { group: "light", label: "GitHub Light", vars: { "bg": "#ffffff", "surface": "#f6f8fa", "surface-hover": "#ebedf0", "border": "#d0d7de", "text": "#1f2328", "text-muted": "#656d76", "accent": "#0969da", "method-get": "#1a7f37", "method-post": "#0969da", "method-put": "#9a6700", "method-delete": "#cf222e", "new": "#1a7f37", "changed": "#0969da", "removed": "#cf222e", "edge-a": "#8250df", "edge-b": "#0550ae" } },
+  "ayu-light": { group: "light", label: "Ayu Light", vars: { "bg": "#fafafa", "surface": "#f0f0f0", "surface-hover": "#e7e8e9", "border": "#d8d8d7", "text": "#5c6166", "text-muted": "#8a9199", "accent": "#f2ae49", "method-get": "#86b300", "method-post": "#36a3d9", "method-put": "#f2ae49", "method-delete": "#f07171", "new": "#86b300", "changed": "#f2ae49", "removed": "#f07171", "edge-a": "#a37acc", "edge-b": "#399ee6" } },
+  "dayfox": { group: "light", label: "Dayfox", vars: { "bg": "#f6f2ee", "surface": "#ebe7e4", "surface-hover": "#e2deda", "border": "#ccc8c4", "text": "#3d2b5a", "text-muted": "#837486", "accent": "#a5222f", "method-get": "#396847", "method-post": "#2848a9", "method-put": "#a06c25", "method-delete": "#a5222f", "new": "#396847", "changed": "#a5222f", "removed": "#a5222f", "edge-a": "#6e33ce", "edge-b": "#287980" } },
+  "kanagawa-lotus": { group: "light", label: "Kanagawa Lotus", vars: { "bg": "#f2ecbc", "surface": "#e7dba0", "surface-hover": "#dcd28c", "border": "#c9b77c", "text": "#545464", "text-muted": "#8a8980", "accent": "#624c83", "method-get": "#6f894e", "method-post": "#4d699b", "method-put": "#cc6d00", "method-delete": "#c84053", "new": "#6f894e", "changed": "#624c83", "removed": "#c84053", "edge-a": "#b35b79", "edge-b": "#597b75" } }
+};
+
+let _currentTheme = null;
+
+function applyTheme(themeId) {
+  const theme = THEMES[themeId];
+  if (!theme) return;
+  _currentTheme = themeId;
+  const root = document.documentElement;
+  Object.entries(theme.vars).forEach(([k, v]) => root.style.setProperty("--" + k, v));
+  try { localStorage.setItem("arch-viewer-theme", themeId); } catch(e) {}
+}
+
+function getInitialTheme(defaultTheme) {
+  try {
+    const saved = localStorage.getItem("arch-viewer-theme");
+    if (saved && THEMES[saved]) return saved;
+  } catch(e) {}
+  return defaultTheme && THEMES[defaultTheme] ? defaultTheme : null;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ARCHITECTURE VIEWER ENGINE — generic, reusable
@@ -1136,6 +1225,63 @@ function SearchOverlay({ onClose, onSelect }) {
   );
 }
 
+// ─── THEME PICKER ─────────────────────────────────────────────────────────────
+
+function ThemePicker() {
+  const [open, setOpen] = useState(false);
+  const [, forceUpdate] = useState(0);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const currentLabel = _currentTheme && THEMES[_currentTheme] ? THEMES[_currentTheme].label : "Theme";
+
+  const grouped = useMemo(() => {
+    const dark = [], light = [];
+    Object.entries(THEMES).forEach(([id, t]) => {
+      (t.group === "light" ? light : dark).push([id, t]);
+    });
+    return { dark, light };
+  }, []);
+
+  function renderGroup(label, items, isSecond) {
+    return [
+      React.createElement("div", {
+        key: "hdr-" + label,
+        style: { padding: "6px 12px 2px", fontSize: "var(--text-xs)", fontWeight: 600,
+          color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.5px",
+          borderTop: isSecond ? "1px solid var(--border)" : "none" }
+      }, label),
+      ...items.map(([id, theme]) =>
+        React.createElement("div", {
+          key: id,
+          className: "theme-option" + (_currentTheme === id ? " active" : ""),
+          onClick: () => { applyTheme(id); setOpen(false); forceUpdate(n => n + 1); }
+        },
+          React.createElement("span", { className: "theme-swatch", style: { background: theme.vars.bg } }),
+          React.createElement("span", { className: "theme-swatch", style: { background: theme.vars.accent } }),
+          theme.label
+        )
+      )
+    ];
+  }
+
+  return React.createElement("div", { className: "theme-picker", ref },
+    React.createElement("button", {
+      className: "theme-picker-btn",
+      onClick: () => setOpen(o => !o)
+    }, "\u25D1 " + currentLabel),
+    open && React.createElement("div", { className: "theme-dropdown" },
+      ...renderGroup("Dark", grouped.dark, false),
+      ...renderGroup("Light", grouped.light, true)
+    )
+  );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 
 function App() {
@@ -1282,7 +1428,8 @@ function App() {
         key: t.id,
         className: `tab-btn ${tab === t.id ? "active" : ""}`,
         onClick: () => handleTabChange(t.id)
-      }, t.label))
+      }, t.label)),
+      React.createElement(ThemePicker)
     ),
 
     // Scene bar
@@ -1331,11 +1478,14 @@ function createArchitectureViewer(config) {
     links:  { files: [], issues: [], ...(config.links || {}) }
   };
   document.title = VIEWER.title;
+  // Apply theme: saved in localStorage > config.theme > built-in default
+  const initialTheme = getInitialTheme(config.theme);
+  if (initialTheme) applyTheme(initialTheme);
   ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
 }
 
 // ═══ CALL createArchitectureViewer() HERE ═══
-// createArchitectureViewer({ title, tabs, nodes, scenes, links });
+// createArchitectureViewer({ title, tabs, nodes, scenes, links, theme: "catppuccin-mocha" });
 </script>
 </body>
 </html>

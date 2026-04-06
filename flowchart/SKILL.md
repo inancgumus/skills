@@ -120,20 +120,21 @@ Read `references/config-schema.md` for the full schema. Key rules:
 
 Read the engine template from `references/engine-template.html`. This contains:
 - The full HTML/CSS
+- 15 built-in themes (popular vim/neovim colorschemes) with a runtime theme picker
 - The viewer engine JS (layout, routing, components)
 - A placeholder where your data goes
 
 To produce the output file:
 1. Copy the engine template
 2. Replace the placeholder section with your generated `NODE_DATA` and `SCENES` constants
-3. Add the `createArchitectureViewer()` call at the bottom with title, tabs, nodes, scenes, and links
+3. Add the `createArchitectureViewer()` call at the bottom with title, tabs, nodes, scenes, links, and optionally a default `theme`
 4. Write to the user's specified path (default: `architecture.html` in the current directory)
 
 The structure of the output file:
 ```
 [HTML head + CSS from template]
 <script type="text/babel">
-[Engine JS from template — everything from React hooks through createArchitectureViewer function]
+[Engine JS from template — themes, hooks, components, createArchitectureViewer]
 
 // ═══ GENERATED DATA ═══
 const NODE_DATA = { ... };
@@ -144,11 +145,22 @@ createArchitectureViewer({
   tabs: [...],
   nodes: NODE_DATA,
   scenes: SCENES,
-  links: { files: [...], issues: [...] }
+  links: { files: [...], issues: [...] },
+  theme: "catppuccin-mocha"  // optional — sets the default theme
 });
 </script>
 </body></html>
 ```
+
+**Themes:**
+
+The engine includes 34 themes from popular vim/neovim colorschemes, grouped into Dark and Light in the dropdown. Users can switch at any time via the picker in the top-right of the tab bar. The choice persists in localStorage.
+
+Available theme IDs:
+- **Dark (23):** `catppuccin-mocha`, `catppuccin-frappe`, `catppuccin-macchiato`, `tokyo-night`, `tokyo-night-storm`, `tokyonight-moon`, `gruvbox-dark`, `nord`, `dracula`, `one-dark`, `solarized-dark`, `rose-pine`, `rose-pine-moon`, `kanagawa`, `everforest-dark`, `nightfox`, `carbonfox`, `github-dark`, `ayu-dark`, `ayu-mirage`, `monokai-pro`, `material-deep-ocean`, `palenight`
+- **Light (11):** `catppuccin-latte`, `tokyo-night-light`, `gruvbox-light`, `solarized-light`, `rose-pine-dawn`, `everforest-light`, `one-light`, `github-light`, `ayu-light`, `dayfox`, `kanagawa-lotus`
+
+To set a default, pass `theme: "<id>"` in the `createArchitectureViewer()` config. If omitted, the viewer uses its built-in dark style unless the user has previously picked a theme (saved in localStorage). If the user asks for a specific theme or light/dark preference, set the matching `theme` ID.
 
 ### 6a. HTML: Open in browser
 
@@ -223,7 +235,8 @@ createArchitectureViewer({
   tabs: [{ id: "system", label: "System" }],
   nodes: NODE_DATA,
   scenes: SCENES,
-  links: { files: [{ baseUrl: "https://github.com/myorg/myrepo/blob/main/" }], issues: [] }
+  links: { files: [{ baseUrl: "https://github.com/myorg/myrepo/blob/main/" }], issues: [] },
+  theme: "catppuccin-mocha"  // optional: default theme (user can switch via dropdown)
 });
 ```
 
