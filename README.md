@@ -10,6 +10,7 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [handoff](handoff/) | Write or load a HANDOFF.md to preserve and restore session state across agent sessions |
 | [designdoc](designdoc/) | Write or rewrite technical design docs, RFCs, and proposals for cold readers |
 | [flowchart](flowchart/) | Generate flowcharts and architecture diagrams as interactive HTML or Markdown+ASCII |
+| [go](go/) | Modern Go practices |
 
 ## Install
 
