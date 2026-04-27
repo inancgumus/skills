@@ -21,6 +21,7 @@ from slack import (
     get_channel_name,
     go_to_channel,
     open_thread,
+    parse_slack_url,
     read_message_content,
     read_thread_messages,
     resolve_ref,
@@ -39,21 +40,29 @@ def main() -> None:
 
     ensure_slack_cdp(args.cdp)
 
-    # Resolve and group by channel for efficient navigation
-    by_channel: dict[str, list[str]] = {}
+    # Resolve and group by channel for efficient navigation.
+    # For thread URLs, extract the parent ts so we can open the right thread
+    # instead of guessing from visible DOM.
+    by_channel: dict[str, list[tuple[str, str | None]]] = {}  # cid -> [(msg_ts, parent_ts)]
     for mid in args.message_ids:
         cid, ts = resolve_ref(mid, args.cdp)
         if ts == "":
             sys.exit("Error: must reference a specific message, not just a channel.")
-        by_channel.setdefault(cid, []).append(ts)
+        parent_ts = None
+        if "archives/" in mid:
+            parsed = parse_slack_url(mid)
+            thread_id = parsed.get("thread_id")
+            if thread_id and thread_id != ts:
+                parent_ts = thread_id
+        by_channel.setdefault(cid, []).append((ts, parent_ts))
 
     # Read each message
     records: list[dict] = []
-    for channel_id, timestamps in by_channel.items():
+    for channel_id, entries in by_channel.items():
         go_to_channel(channel_id, args.cdp)
         channel = get_channel_name(channel_id, args.cdp)
-        for ts in timestamps:
-            data = read_message_content(ts, args.cdp)
+        for ts, parent_ts in entries:
+            data = read_message_content(ts, args.cdp, parent_ts=parent_ts)
             if data is None:
                 records.append({"channel_id": channel_id, "channel": channel,
                                 "message_id": ts, "error": "not found"})
@@ -69,11 +78,12 @@ def main() -> None:
     # Read thread replies
     if args.with_replies:
         thread_msgs: dict[str, dict[str, str]] = {}
-        for channel_id, timestamps in by_channel.items():
+        for channel_id, entries in by_channel.items():
             go_to_channel(channel_id, args.cdp)
-            for ts in timestamps:
-                scroll_to_message(ts, args.cdp)
-                if open_thread(ts, args.cdp):
+            for ts, parent_ts in entries:
+                thread_root = parent_ts or ts
+                scroll_to_message(thread_root, args.cdp)
+                if open_thread(thread_root, args.cdp):
                     thread_msgs[ts] = read_thread_messages(args.cdp)
                     close_thread(args.cdp)
 

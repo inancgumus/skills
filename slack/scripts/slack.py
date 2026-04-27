@@ -16,6 +16,9 @@ import sys
 import time
 
 
+POLL_INTERVAL_SECONDS = 0.1
+
+
 # ---------------------------------------------------------------------------
 # Low-level agent-browser wrappers
 # ---------------------------------------------------------------------------
@@ -150,7 +153,7 @@ def find_all_refs(snapshot: str, label_pattern: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def wait_for(js: str, *, cdp: int = 9222, timeout: float = 10):
-    """Poll until JS expression returns a truthy value. No sleep — ab_eval call latency throttles naturally."""
+    """Poll until JS expression returns a truthy value without hammering Slack."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -160,6 +163,8 @@ def wait_for(js: str, *, cdp: int = 9222, timeout: float = 10):
                 return val
         except (RuntimeError, subprocess.TimeoutExpired):
             pass
+        if time.monotonic() < deadline:
+            time.sleep(POLL_INTERVAL_SECONDS)
     return None
 
 
@@ -175,6 +180,8 @@ def wait_for_ref(pattern: str, *, cdp: int = 9222, timeout: float = 10) -> tuple
                 return ref, snapshot
         except (RuntimeError, subprocess.TimeoutExpired):
             pass
+        if time.monotonic() < deadline:
+            time.sleep(POLL_INTERVAL_SECONDS)
     return None, snapshot
 
 
@@ -207,56 +214,107 @@ def ensure_clean_state(cdp: int) -> str:
 
 
 def _open_search_bar(cdp: int) -> str | None:
-    """Open the Slack search bar and return the combobox ref.
+    """Open the Slack search bar and return the search input ref.
 
-    Handles both fresh open (via Search button) and already-open states.
+    The search input is the combobox labeled "Query" that appears when the
+    global search bar is active. This must not be confused with channel/thread
+    message inputs, filter comboboxes, or the "Search in channel" button.
     """
+    # The search input is always combobox "Query".
+    search_input_pattern = r'combobox "Query'
+
     snapshot = ab("snapshot", "-i", cdp=cdp)
-    input_ref = find_ref(snapshot, r'combobox')
+    input_ref = find_ref(snapshot, search_input_pattern)
     if input_ref:
         return input_ref
 
+    # Click the global Search button (not "Search in channel" or "Search: <query>").
+    # "Search" is the exact label when no prior search exists.
+    # "Search: <query>" appears in search results view; clicking it re-opens
+    # the input with old text pre-filled, which callers must clear.
     search_ref = find_ref(snapshot, r'button "Search')
     if not search_ref:
         return None
     ab("click", f"@{search_ref}", cdp=cdp)
-    ref, _ = wait_for_ref(r'combobox', cdp=cdp, timeout=3)
+    ref, _ = wait_for_ref(search_input_pattern, cdp=cdp, timeout=3)
     if ref:
         return ref
 
-    # "Search: <query>" opens results view, not combobox — dismiss and retry
+    # Clicking "Search: <query>" may have opened the results view instead of
+    # the input. Dismiss and retry with a fresh Search button.
     ab("press", "Escape", cdp=cdp)
     ref, _ = wait_for_ref(r'button "Search', cdp=cdp, timeout=3)
     if ref:
         ab("click", f"@{ref}", cdp=cdp)
-        ref, _ = wait_for_ref(r'combobox', cdp=cdp, timeout=5)
+        ref, _ = wait_for_ref(search_input_pattern, cdp=cdp, timeout=5)
     return ref
 
 
-def navigate_to(target: str, cdp: int) -> bool:
+def _clear_and_fill_search(input_ref: str, text: str, cdp: int) -> str:
+    """Clear the search input and type new text.
+
+    Slack's search is a Quill contenteditable; fill appends instead of
+    replacing. Always click the Clear button first if present, then fill
+    into the empty input.
+    Returns the (possibly updated) input ref.
+    """
+    snapshot = ab("snapshot", "-i", cdp=cdp)
+    clear_ref = find_ref(snapshot, r'button "Clear"')
+    if clear_ref:
+        ab("click", f"@{clear_ref}", cdp=cdp)
+        ref, _ = wait_for_ref(r'combobox "Query', cdp=cdp, timeout=3)
+        if ref:
+            input_ref = ref
+
+    ab("fill", f"@{input_ref}", text, cdp=cdp)
+    return input_ref
+
+
+def navigate_to(target: str, cdp: int, prefer: str = "") -> bool:
     """Navigate to a channel, DM, or view via the Slack search bar.
 
-    Opens the search bar, types the target, and picks the first non-search
+    prefer: 'dm' to prefer Direct Message options, 'channel' to prefer
+    non-DM options, or '' for first match.
+
+    Opens the search bar, types the target, and picks the best non-search
     option from the dropdown (i.e. the channel/DM/view, not "Search for: …").
     """
-    ab("press", "Escape", cdp=cdp)
+    ensure_clean_state(cdp)
 
     input_ref = _open_search_bar(cdp)
     if not input_ref:
         return False
 
-    ab("fill", f"@{input_ref}", target, cdp=cdp)
+    _clear_and_fill_search(input_ref, target, cdp)
     _, snapshot = wait_for_ref(r'option', cdp=cdp, timeout=5)
 
-    # Pick the first channel/DM option, skipping "Search for:" options
+    # Collect non-search options from the dropdown
+    candidates: list[tuple[str, str]] = []  # (ref, line)
     for line in snapshot.splitlines():
         if re.search(r'option', line, re.IGNORECASE) and 'Search for:' not in line:
             m = re.search(r'\bref=(e\d+)', line)
             if m:
-                ab("click", f"@{m.group(1)}", cdp=cdp)
-                wait_for(f"""document.querySelector('{DOM["MESSAGE_PANE"]}') ? 'ok' : null""", cdp=cdp, timeout=5)
-                return True
-    return False
+                candidates.append((m.group(1), line))
+
+    if not candidates:
+        return False
+
+    # Pick the best match based on caller's preference
+    pick = candidates[0][0]
+    if prefer == "dm":
+        for ref, line in candidates:
+            if "Direct Message" in line:
+                pick = ref
+                break
+    elif prefer == "channel":
+        for ref, line in candidates:
+            if "Direct Message" not in line and "PNG" not in line:
+                pick = ref
+                break
+
+    ab("click", f"@{pick}", cdp=cdp)
+    wait_for(f"""document.querySelector('{DOM["MESSAGE_PANE"]}') ? 'ok' : null""", cdp=cdp, timeout=5)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +337,7 @@ def _resolve_channel_name(name: str, cdp: int) -> str:
     if isinstance(cid, str):
         return cid
     # Fallback: navigate to channel and extract ID from URL
-    if not navigate_to(name, cdp):
+    if not navigate_to(name, cdp, prefer="channel"):
         return ""
     url = ab_eval("window.location.href", cdp=cdp)
     m = re.search(r'/([A-Z][A-Z0-9]{7,})', url)
@@ -313,7 +371,7 @@ def resolve_ref(ref: str, cdp: int = 9222) -> tuple[str, str]:
     # DM by display name — must start with @
     if ref.startswith("@"):
         name = ref[1:]
-        navigate_to(name, cdp)
+        navigate_to(name, cdp, prefer="dm")
         wait_for(r"""(() => { const h = window.location.href; return /\/[A-Z][A-Z0-9]{7,}/.test(h) ? h : null; })()""", cdp=cdp, timeout=5)
         url = ab_eval("window.location.href", cdp=cdp)
         m = re.search(r'/([A-Z][A-Z0-9]{7,})', url)
@@ -410,12 +468,19 @@ DOM = {
 
 
 def get_channel_name(channel_id: str, cdp: int = 9222) -> str:
-    """Get the display name of a channel from its sidebar item."""
+    """Get the display name of a channel from its sidebar item or header."""
     raw = ab_eval(f"""(() => {{
         const item = document.querySelector('[data-qa-channel-sidebar-channel-id="{channel_id}"]');
-        if (!item) return 'null';
-        const nameEl = item.querySelector('[data-qa="channel_sidebar_name"]') || item;
-        return JSON.stringify(nameEl.textContent.trim().split('\\n')[0].trim());
+        if (item) {{
+            const nameEl = item.querySelector('[data-qa="channel_sidebar_name"]') || item;
+            return JSON.stringify(nameEl.textContent.trim().split('\\n')[0].trim());
+        }}
+        // Fallback: read from channel header if we're currently in the channel
+        if (window.location.href.includes('{channel_id}')) {{
+            const header = document.querySelector('.p-view_header__channel_title');
+            if (header) return JSON.stringify(header.textContent.trim());
+        }}
+        return 'null';
     }})()""", cdp=cdp)
     name = decode_ab_json(raw)
     return name if isinstance(name, str) else ""
@@ -437,6 +502,9 @@ def go_to_channel(name_or_id: str, cdp: int = 9222) -> bool:
     current = ab_eval("window.location.href", cdp=cdp)
     if name_or_id in current:
         return True
+
+    # Dismiss search overlays so the sidebar is accessible
+    ensure_clean_state(cdp)
 
     # Try sidebar by channel ID attribute (for IDs like C0123456789)
     if name_or_id.startswith("C") and len(name_or_id) >= 9:
@@ -463,7 +531,7 @@ def go_to_channel(name_or_id: str, cdp: int = 9222) -> bool:
         return True
 
     # Fall back to search bar
-    return navigate_to(name_or_id, cdp)
+    return navigate_to(name_or_id, cdp, prefer="channel")
 
 
 def jump_to_date(year: int, month: int, day: int, cdp: int = 9222) -> bool:
@@ -830,11 +898,13 @@ def extract_msg(msg_ts: str, cdp: int) -> dict | None:
     return data
 
 
-def read_message_content(msg_ts: str, cdp: int = 9222) -> dict | None:
+def read_message_content(msg_ts: str, cdp: int = 9222, parent_ts: str | None = None) -> dict | None:
     """Read structured message data (author, date, text, reactions) by timestamp.
 
     Tries the channel view first (with a jump-to-date fallback for old messages).
     If still not found, assumes it's a thread reply and opens the parent thread.
+    When parent_ts is provided (e.g. from a thread URL), uses it directly
+    instead of guessing the parent from visible DOM.
     Returns None if the message cannot be located.
     """
     msg_ts = normalize_ts(msg_ts)
@@ -842,8 +912,10 @@ def read_message_content(msg_ts: str, cdp: int = 9222) -> dict | None:
     if scroll_to_message(msg_ts, cdp):
         return extract_msg(msg_ts, cdp)
 
-    # Not in channel view — may be a thread reply
-    parent_ts = find_thread_parent(msg_ts, cdp)
+    # Not in channel view — it's a thread reply.
+    # Use known parent if provided, otherwise guess from visible DOM.
+    if not parent_ts:
+        parent_ts = find_thread_parent(msg_ts, cdp)
     if not parent_ts or not open_thread(parent_ts, cdp):
         return None
     data = extract_msg(msg_ts, cdp)
@@ -1046,6 +1118,25 @@ def get_search_state(cdp: int = 9222) -> tuple[str, int]:
     return (state.get("q", ""), state.get("p", 0))
 
 
+def _resolve_search_pickers(cdp: int, timeout: int = 8) -> None:
+    """Handle Slack's autocomplete pickers for search modifiers.
+
+    When queries contain from:@, in:#, etc., Slack shows person/channel
+    autocomplete dropdowns instead of "Search for:". This selects the
+    first autocomplete item for each picker until they're all resolved.
+    """
+    for _ in range(5):
+        raw = ab_eval(r"""(() => {
+            const items = document.querySelectorAll('[data-qa="tab_complete_ui_item"]');
+            if (items.length) { items[0].click(); return 'picked'; }
+            return 'none';
+        })()""", cdp=cdp)
+        if "none" in raw:
+            return
+        import time
+        time.sleep(0.5)
+
+
 def execute_search(query: str, cdp: int = 9222) -> None:
     """Open search bar, type query, click 'Search for:' option to trigger message search."""
     ensure_clean_state(cdp)
@@ -1054,21 +1145,20 @@ def execute_search(query: str, cdp: int = 9222) -> None:
     if not query_ref:
         sys.exit("Error: could not find the search input.")
 
-    # Slack's combobox ignores `fill`'s clear — click the Clear button if present
-    snapshot = ab("snapshot", "-i", cdp=cdp)
-    clear_ref = find_ref(snapshot, r'button "Clear"')
-    if clear_ref:
-        ab("click", f"@{clear_ref}", cdp=cdp)
-        ref, _ = wait_for_ref(r'combobox', cdp=cdp, timeout=3)
-        if ref:
-            query_ref = ref
+    _clear_and_fill_search(query_ref, query, cdp)
 
-    ab("fill", f"@{query_ref}", query, cdp=cdp)
+    # Wait for either "Search for:" option or an autocomplete picker.
     _, snapshot = wait_for_ref(r'option "Search for:', cdp=cdp, timeout=5)
-
     search_option = find_ref(snapshot, r'option "Search for:')
+
     if not search_option:
-        sys.exit("No results found, or the query may be invalid.")
+        # Modifiers like from:@, in:# trigger autocomplete pickers.
+        # Resolve them, then press Enter to submit the composed query.
+        _resolve_search_pickers(cdp)
+        ab("press", "Enter", cdp=cdp)
+        wait_for("""document.querySelector('[data-qa="search_result"]') ? 'ok' : null""", cdp=cdp, timeout=10)
+        return
+
     ab("click", f"@{search_option}", cdp=cdp)
     wait_for("""document.querySelector('[data-qa="search_result"]') ? 'ok' : null""", cdp=cdp, timeout=10)
 
