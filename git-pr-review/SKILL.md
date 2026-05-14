@@ -7,7 +7,7 @@ command: pr-review
 
 # PR Review
 
-Verify claims, not skim diffs.
+Verify claims, not skim diffs. Try before suggest. Never claim something work or break without running it. "Probably" = not verified = keep going.
 
 ## Gathering context
 
