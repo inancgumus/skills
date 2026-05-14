@@ -69,9 +69,7 @@ Rules:
 
 ### 7. Present findings to user
 
-Do not post anything to GitHub yet. Show each inline review exactly as it would be sent to GitHub. Do not add extra commentary for the user. The user must see what would be sent to GitHub for each finding, including all formatting, markdown, and `suggestion` blocks. The user decides which to post, edit, or drop.
-
-You must directly show the markdown for each inline review to the user without any additional commentary or formatting.
+Do not post anything to GitHub yet. Do not explain the findings to the user. Instead, for each inline review, show the exact text that will be posted to GitHub in a markdown codeblock. Only that, nothing else. The user decides which to post, edit, or drop.
 
 Wait for explicit confirmation before posting.
 
