@@ -11,6 +11,9 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [designdoc](designdoc/) | Write or rewrite technical design docs, RFCs, and proposals for cold readers |
 | [flowchart](flowchart/) | Generate flowcharts and architecture diagrams as interactive HTML or Markdown+ASCII |
 | [go](go/) | Modern Go practices |
+| [git-pr](git-pr/) | Write PR descriptions in engineer-to-engineer tone |
+| [git-pr-review](git-pr-review/) | Review PRs by verifying claims and posting inline reviews via `gh` |
+| [git-split](git-split/) | Split big commits into smaller, atomic ones |
 
 ## Install
 
@@ -50,3 +53,13 @@ The script is idempotent — run it after cloning on a new machine, or after add
 **flowchart**
 - No dependencies (HTML output is a single self-contained file)
 - [agent-browser](https://github.com/anthropics/agent-browser) CLI (optional, for auto-opening the HTML output)
+
+**git-pr**
+- `gh` CLI
+
+**git-pr-review**
+- `gh` CLI
+- Docker (for reproducing config/infra PR claims locally)
+
+**git-split**
+- No dependencies
