@@ -7,77 +7,75 @@ command: pr-review
 
 # PR Review
 
-Review GitHub PRs by verifying claims, not skimming diffs.
+Verify claims, not skim diffs.
 
-## Workflow
+## Gathering context
 
-### 1. Load skills
+Before analysis, build full context:
 
-Use the `stop-slop` skill when writing or replying. Use `go` and `go-patterns` skills for reviewing Go code.
+1. Read PR description, diff, all comments (`gh pr view --comments`, `gh pr diff`).
+2. Extract every linked reference: issue URLs, PR URLs, doc links, commit SHAs.
+3. Check existing review comments (`gh api repos/{owner}/{repo}/pulls/{number}/reviews` and `/comments`).
+4. Dispatch subagents parallel — one per linked reference. Subagent reads full content (issue body, comments, linked PRs, docs), returns raw unabridged. No summarize. Follow nested references one level deep.
+5. Study every subagent response full. No skim.
 
-### 2. Gather context
+Now know: problem PR solves, what tried before, constraints, what reviewers said. Then analyze.
 
-```bash
-gh pr view <number> --repo <owner/repo> --json title,body,author,state,baseRefName,headRefName,additions,deletions,files,labels,reviews,comments,statusCheckRollup
-gh pr diff <number> --repo <owner/repo>
+## Finding bugs
+
+Extract every testable claim from PR description (test plans, behavioral assertions, config correctness).
+
+Verify each independently. No stop at first bug. Never assume. Lack info? Run code, experiment, search docs/web.
+
+Chase root cause. Trace every symptom to root. Exhaust all WHY chains. Fix = root cause only. Never suggest symptom patch.
+
+- **Config/infra**: reproduce locally. Docker, dry-run, validation. Run against PR author's actual repo/branch.
+- **Code**: trace paths. Callers, edge cases, error handling. Run PR author's changes exact setup. Go: `go vet`, `golangci-lint`, `go test` affected packages.
+- **Docs**: verify accuracy. Check references. Confirm examples compile/run.
+
+After claims verified, inspect diff for unmentioned problems: wrong defaults, missing edge cases, conflicts, silent failures, bad assumptions. Find every problem.
+
+Check CI failures/skips. All green, move on.
+
+## Writing inline reviews
+
+One finding, one line. Problem, then fix. `suggestion` blocks for concrete fixes.
+
+Prioritize internally (broken > fragile > minor). No severity labels in output.
+
+**Drop:** "I noticed...", "It seems...", "You might want...", "suggestion but...", "Great work!", investigation narration, restating diff, hedging, praise, filler, style nits.
+
+**Keep:** exact symbols in backticks, concrete fix, *why* if not obvious.
+
+## Examples
+
+❌ "I noticed that on line 42 you're not checking if the error is nil before accessing the response body. This could potentially cause a nil pointer dereference if the request fails. You might want to add an error check here."
+
+✅ `err` unchecked before `resp.Body` access. `nil` pointer on failed request.
+
+❌ "It looks like this function is doing a lot of things and might benefit from being broken up into smaller functions for readability."
+
+✅ 50-line function does 4 things. Extract validate/normalize/persist.
+
+❌ "Have you considered what happens if the API returns a 429? I think we should probably handle that case."
+
+✅ No retry on 429.
+
+```suggestion
+	resp, err := withBackoff(3, func() (*http.Response, error) {
+		return client.Do(req)
+	})
 ```
 
-Read the PR description carefully. Extract every testable claim from the body (test plans, behavioral assertions, config correctness, compatibility statements).
+## Presenting to user
 
-If the diff touches files you need surrounding context for, read those files from the repo.
+Do not post to GitHub yet. User decides post/edit/drop. Wait explicit confirmation. MUST: Recheck all findings follow this skill's rules before presenting. Show each finding to the user in ` ```markdown ` fence: raw markdown sent to GitHub (including `suggestion` blocks).
 
-### 3. Verify claims
+## Posting
 
-This is the core of the review. Do not skip it.
+Only after user confirms ("send", "post", "ship", "lgtm").
 
-Verify every claim independently. Do not stop at the first bug. A PR can have multiple incorrect claims, wrong assumptions, or mismatched behavior. Test each one to completion. Collect all findings.
-
-For each claim in the PR description or commit messages:
-
-- **Config/infra PRs** (CI, Renovate, Terraform, Docker): reproduce locally. Use Docker containers, dry-run tools, or local validation commands. Run against the PR author's actual repo and branch to confirm the config does what the PR claims.
-- **Code PRs**: trace the code paths the PR changes. Read callers, check edge cases, verify error handling. Try the PR author's changes in an exact setup using their code to see if what they claim matches the expected behavior. Run tests if the repo is local. For Go code, run `go vet`, `golangci-lint`, and `go test` on affected packages.
-- **Docs PRs**: verify technical accuracy of claims. Check linked references. Confirm code examples compile or run.
-
-Not every PR needs Docker reproduction. Use judgment:
-
-- Config that references external APIs or services: verify the API exists and behaves as assumed.
-- Pure code refactors with passing CI: trace the logic, check tests cover the change.
-- New features: verify the test plan covers the claimed behavior.
-
-Never assume. If you lack the information to verify a claim, run code, do experiments, search docs or the web. If you still cannot verify after exhausting those, say so explicitly in the posted inline review.
-
-### 4. Find unclaimed problems
-
-After verifying all claims, inspect the diff for problems the PR author didn't mention: wrong defaults, missing edge cases, conflicts with existing config or code, silent failures, incorrect assumptions. Continue until you've found every problem with the PR.
-
-### 5. Check CI status
-
-Check for CI failures or skips. If all green, move on.
-
-### 6. Write inline reviews
-
-Each finding becomes an inline review targeting a specific line or range in the diff.
-
-Rules:
-
-- Keep it short. One or two sentences max for the explanation. The PR author is an engineer, not a reader.
-- Do not narrate your investigation process. No "I ran X and saw Y" or "Confirmed via Z". State the problem and the fix.
-- When suggesting a code change, use a `suggestion` block (GitHub's format). Prefer these. They let the PR author apply the fix in one click.
-- No line numbers in the review text. The inline review is already attached to the right line.
-- Use backticks for technical terms: datasource names, function names, file paths, CLI flags, config keys, error messages.
-- No filler, no hedging, no "I think", no "consider". State facts.
-
-### 7. Present findings to user
-
-Do not post anything to GitHub yet. Do not explain the findings to the user. Instead, for each inline review, show the exact text that will be posted to GitHub in a markdown codeblock. Only that, nothing else. The user decides which to post, edit, or drop.
-
-Wait for explicit confirmation before posting.
-
-### 8. Post the review
-
-Only after user says to post ("send", "post", "ship", "lgtm", or similar).
-
-Submit all inline reviews in one GitHub review. Build the JSON payload with `jq` to avoid shell escaping:
+Submit all inline reviews one GitHub review via `gh api`:
 
 ```bash
 jq -n \
@@ -92,37 +90,6 @@ gh api repos/{owner}/{repo}/pulls/{number}/reviews \
   --input /tmp/review-payload.json
 ```
 
-Each object in the JSON array:
+Each object: `path` (file), `line` (new file line, not diff position), `side` (`RIGHT`), `body` (review text + `suggestion` blocks). Ranges: add `start_line`, `start_side`. `suggestion` blocks must target exact code line they replace — wrong line = PR author applies fix wrong place.
 
-- `path`: file path relative to repo root
-- `line`: line number in the new version of the file (not the diff position)
-- `side`: `RIGHT` for new code
-- `body`: the inline review text with `suggestion` blocks if applicable
-
-For multi-line inline reviews, add `start_line` and `start_side` to target a range.
-
-
-### 9. Clean up
-
-Remove local clones, temp files, and Docker containers created during verification.
-
-## Comment format
-
-One sentence that explains the issue. Add evidence or fix after if needed.
-
-When a concrete fix exists, add a `suggestion` block after the paragraph. The block replaces the lines the comment targets (the `line` and optional `start_line` in the review API). Content inside must be exact replacement text, matching the file's indentation. GitHub renders it as a one-click "Apply suggestion" button.
-
-## What makes a good inline review
-
-- States a fact the PR author can verify. Not opinion.
-- Gives a concrete fix via `suggestion` block, or names the specific question.
-- Short. The PR author should understand the problem in seconds.
-
-## What to avoid
-
-- Style issues. Review behavior, not style.
-- Restating what the diff already shows ("I see you added X").
-- Praise ("nice work", "clever approach").
-- Hedging ("you might want to consider").
-- Multiple paragraphs when one sentence covers it.
-- Reviewing things outside the diff scope.
+After posting, remove local clones, temp files, Docker containers.
