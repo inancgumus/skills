@@ -32,14 +32,14 @@ printf '%s' "$BODY" > /tmp/pr-body.md   # or use the write tool directly
 gh pr create --title '<title>' --body-file /tmp/pr-body.md
 ```
 
-Always write the body to a file and pass `--body-file`. Never inline the body with `--body "..."` or `--body "$(cat <<'EOF' ... EOF)"`. PR descriptions almost always contain backticks (`` `k6 x` ``, code spans, command names) and most agent command runners wrap the user's command in something like `bash -c "<command>"` for execution. The outer double-quotes trigger backtick expansion before bash ever sees the heredoc, even though `<<'EOF'` would otherwise protect it. Symptom: the backticked tool actually runs (e.g. `k6 x` provisioning logs appear), bare-backticked words emit `command not found`, and tool output lands in the PR description.
+Always write the body to a file and pass `--body-file`. Never inline the body with `--body "..."` or `--body "$(cat <<'EOF' ... EOF)"`. PR descriptions almost always contain backticks (code spans, command names) and most agent command runners wrap the user's command in something like `bash -c "<command>"` for execution. The outer double-quotes trigger backtick expansion before bash ever sees the heredoc, even though `<<'EOF'` would otherwise protect it. Symptom: backticked commands actually run, bare-backticked words emit `command not found`, and tool output lands in the PR description.
 
 Writing the body to a file and passing `--body-file` bypasses every shell layer between the agent and `gh`.
 
 For the title, single-quoted is safe because nothing expands inside single quotes:
 
 ```bash
-gh pr create --title 'Discover subcommands in `k6 x`' --body-file /tmp/pr-body.md
+gh pr create --title 'Add `--format` flag to export command' --body-file /tmp/pr-body.md
 ```
 
 If the title contains a single quote, write it to a file too or use `$'...'` ANSI-C quoting.
@@ -195,11 +195,11 @@ Study these real examples to absorb the tone, scale, and structure. Small PRs ge
 
 ### Small: one-liner PRs
 
-**Title:** `websockets: move source from experimental to k6/websockets`
+**Title:** `config: move validation out of experimental`
 ```markdown
 ## What?
 
-Moves the websockets source code out of experimental/.
+Moves config validation into the stable package.
 
 ## Why?
 
@@ -207,41 +207,38 @@ Keeps the canonical source in the stable module location rather than leaving it 
 
 ## Related
 
-Follow-up to #5579
+Follow-up to #312
 ```
 
-**Title:** `` `k6 x explore` in help output ``
+**Title:** `cli: add `--format` to help output`
 ```markdown
 ## What?
 
-Makes `k6 x explore` discoverable by adding it to the `k6` help output.
+Makes `--format` discoverable by adding it to the help output.
 
 ## Why?
 
-Same gap that #5748 addressed for `k6 x docs`. The `explore` subcommand lets users browse the extension registry from the CLI, but the help output doesn't mention it.
+Users don't know the flag exists unless they read the docs. The help output should surface it.
 
 ## Related PR(s)/Issue(s)
 
-Closes #5787
-Related to #5758
+Closes #455
 ```
 
 ### Small: bug fix, scenario-driven Why
 
-**Title:** `agent: unblock concurrent session creation`
+**Title:** `worker: unblock concurrent job creation`
 ```markdown
 ## What?
 
-Concurrent session creation no longer blocks behind a slow download on the same node.
+Concurrent job creation no longer blocks behind a slow download on the same node.
 
 ## Why?
 
-When a test uses a custom k6 binary (e.g., with extensions), the agent downloads it during session creation. That download can take minutes depending on network and binary size. While it runs, every other session creation request on the same node waits for it to finish, even though the downloads are independent.
-
-Observed on cloud alerts 7397015, 7397440.
+When a job uses a custom binary (e.g., with plugins), the worker downloads it during setup. That download can take minutes. While it runs, every other job on the same node waits, even though the downloads are independent.
 ```
 
-The Why paints the scenario in plain terms. No mention of locks, mutexes, or concurrency primitives. The reader understands when it happens (custom binary download), what goes wrong (other sessions wait), and why it matters (independent work is serialized).
+The Why paints the scenario in plain terms. No mention of locks, mutexes, or concurrency primitives. The reader understands when it happens (custom binary download), what goes wrong (other jobs wait), and why it matters (independent work is serialized).
 
 **Title:** `websockets: fix shutdown deadlock on server pings`
 ```markdown
@@ -251,7 +248,7 @@ Fixes a deadlock where WebSocket connections hang forever during teardown when t
 
 ## Why?
 
-WebSocket connections should shut down cleanly when a test ends or the server drops the connection. A server ping arriving during that window could permanently stall the k6 process. Observed on cloud test run 7385826.
+WebSocket connections should shut down cleanly when a test ends or the server drops the connection. A server ping arriving during that window could permanently stall the process.
 
 ## How to reproduce
 
@@ -259,45 +256,45 @@ The included test sends 20 pings in a burst and drops the TCP connection. Withou
 
 ## Related PR(s)/Issue(s)
 
-Closes #4598
+Closes #198
 ```
 
 ### Small: bug fix with user-visible impact
 
-**Title:** `cloudapi/v6: return accurate error on empty name lookup`
+**Title:** `api: return accurate error on empty name lookup`
 ```markdown
 ## What?
 
-The user sees "load test not found" instead of "an error occurred communicating with k6 Cloud" when the name query returns no tests.
+The user sees "not found" instead of "an error occurred communicating with the server" when the query returns no results.
 
 ## Why?
 
-The API responded correctly, but the test just wasn't there. The old message pointed users and support toward network issues when nothing was wrong with communication.
+The API responded correctly, but the resource wasn't there. The old message pointed users toward network issues when nothing was wrong with communication.
 ```
 
 ### Medium: new feature with code examples
 
-**Title:** `Shell completions for auto-provisioned extensions`
+**Title:** `cli: shell completions for plugin subcommands`
 ```markdown
 ## What?
 
-Shell completions now work for auto-provisioned extension subcommands.
+Shell completions now work for auto-provisioned plugin subcommands.
 
 \`\`\`bash
-$ k6 x docs <TAB>        # provisions and delegates completion
-$ k6 x docs <TAB>        # cached docs returns topic completions
-best-practices  execution  net-grpc timers  x-mqtt
-$ k6 x docs http <TAB>   # deeper completions
+$ mycli plugin docs <TAB>     # provisions and delegates completion
+$ mycli plugin docs <TAB>     # cached, returns topic completions
+http  grpc  websockets  mqtt
+$ mycli plugin docs http <TAB>
 get  post  head  options  del  patch  request
 \`\`\`
 
 ## Why?
 
-Tab completion silently returns nothing for extensions that aren't compiled into the binary. Users who rely on auto-provisioning get no completions even though the extension supports them when bundled.
+Tab completion silently returns nothing for plugins that aren't compiled into the binary. Users who rely on auto-provisioning get no completions even though the plugin supports them when bundled.
 
 ## Notes
 
-- Partial names (`k6 x d<TAB>`) and registered extensions are unaffected. Cobra handles those natively.
+- Partial names and registered plugins are unaffected. Cobra handles those natively.
 ```
 
 ### Medium: behavior change with before/after
@@ -327,14 +324,14 @@ Nested properties like functions and classes were silently dropped or marshaled 
 
 Adds on-demand documentation loading with auto-refresh and preloading.
 
-- Switches to a shared doc infrastructure without changing MCP inputs and outputs.
+- Switches to a shared doc infrastructure without changing inputs and outputs.
 - Lazy-loads documentation files on demand, with multi-version support.
 - Automatically refreshes docs when they change (ETag support).
 - Adds a `-preload` flag to download all versions at startup.
 
 ## Why?
 
-Agents get accurate answers. Stale docs mean wrong code suggestions, outdated API usage, missing features.
+Stale docs mean wrong code suggestions, outdated API usage, missing features.
 
 - Docs stay fresh without rebuilding or redeploying.
 - Smaller binary without the 5MB embed across 19 versions.
@@ -345,10 +342,10 @@ Agents get accurate answers. Stale docs mean wrong code suggestions, outdated AP
 
 ## Note
 
-The new infra uses a filesystem abstraction. We can still embed docs at build time like the current mcp-k6 does, then let the infra refresh them at runtime. I don't recommend it because it inflates the binary. `-preload` achieves the same benefit more simply (~5s) and leaves the decision to users.
+The new infra uses a filesystem abstraction. Docs can still be embedded at build time, then refreshed at runtime. `-preload` achieves the same benefit more simply (~5s) and leaves the decision to users.
 ```
 
-The What summary describes the capability (on-demand loading, auto-refresh, preloading), not the implementation ("switches to shared package", "calls NewCatalog()"). Each bullet is a user-visible behavior. The Why summary names the end-user impact (accurate answers) before listing specific gains. Gains use "X without Y" form. The old approach is mentioned once to show there are no new tradeoffs, not to badmouth it.
+The What summary describes the capability (on-demand loading, auto-refresh, preloading), not the implementation ("switches to shared package", "calls NewCatalog()"). Each bullet is a user-visible behavior. The Why summary names the end-user impact before listing specific gains. Gains use "X without Y" form. The old approach is mentioned once to show there are no new tradeoffs, not to badmouth it.
 
 
 ### Key patterns

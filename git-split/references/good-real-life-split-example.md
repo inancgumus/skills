@@ -1,6 +1,6 @@
-# Good Real-Life Split Example: Browser Frame Document Race
+# Good Real-Life Split Example: Frame Document Race
 
-Issue: `#4371`  
+Issue: `#371`  
 Goal: split one broad race fix into reviewable, atomic commits.
 
 ## Large diff before split (input)
@@ -8,7 +8,7 @@ Goal: split one broad race fix into reviewable, atomic commits.
 This is the kind of mixed large diff that should be split.
 
 ```diff
-diff --git a/internal/js/modules/k6/browser/common/frame.go b/internal/js/modules/k6/browser/common/frame.go
+diff --git a/internal/engine/frame.go b/internal/engine/frame.go
 @@ -27,6 +27,10 @@ type DocumentInfo struct {
  	request    *Request
  }
@@ -44,7 +44,7 @@ diff --git a/internal/js/modules/k6/browser/common/frame.go b/internal/js/module
 +		resp = f.responseByDocumentID(docID)
 +	}
  
- diff --git a/internal/js/modules/k6/browser/common/frame_manager.go b/internal/js/modules/k6/browser/common/frame_manager.go
+ diff --git a/internal/engine/frame_manager.go b/internal/engine/frame_manager.go
 @@ -102,14 +102,14 @@
 -	frame.pendingDocumentMu.Lock()
 +	frame.documentMu.Lock()
@@ -89,12 +89,12 @@ diff --git a/internal/js/modules/k6/browser/common/frame.go b/internal/js/module
 
 ## Atomic commits after split (output)
 
-### 1) `browser: rename frame document mutex`
+### 1) `engine: rename frame document mutex`
 
 Original commit message:
 
 ```text
-browser: rename frame document mutex
+engine: rename frame document mutex
 This lock protects both current and pending document state.
 The old name suggested it only covered pending state.
 ```
@@ -116,12 +116,12 @@ every later diff smaller and easier to reason about.
 +	frame.documentMu.Lock()
 ```
 
-### 2) `browser: add document id matcher`
+### 2) `engine: add document id matcher`
 
 Original commit message:
 
 ```text
-browser: add document id matcher
+engine: add document id matcher
 There were repeated nil checks around document comparisons.
 A small matcher keeps those checks consistent.
 ```
@@ -143,12 +143,12 @@ cheap to review and creates a reusable building block for later commits.
 +	if frame.pendingDocument.is(documentID) {
 ```
 
-### 3) `browser: add frame request lookup`
+### 3) `engine: add frame request lookup`
 
 Original commit message:
 
 ```text
-browser: add frame request lookup
+engine: add frame request lookup
 Request lookup by document ID was scattered and easy to get wrong.
 Putting it behind one helper keeps that logic in one place.
 ```
@@ -170,12 +170,12 @@ creation from being mixed with the later behavior-ordering change.
 +			request = frame.requestByDocumentID(e.newDocument.documentID)
 ```
 
-### 4) `browser: add frame response lookup`
+### 4) `engine: add frame response lookup`
 
 Original commit message:
 
 ```text
-browser: add frame response lookup
+engine: add frame response lookup
 Response lookup should follow the same path as request lookup.
 A dedicated helper keeps request/response access aligned.
 ```
@@ -200,12 +200,12 @@ changes. The reviewer can confirm symmetry with request lookup in one commit.
 +				resp = frame.responseByDocumentID(e.newDocument.documentID)
 ```
 
-### 5) `browser: move goto response after lifecycle`
+### 5) `engine: move goto response after lifecycle`
 
 Original commit message:
 
 ```text
-browser: move goto response after lifecycle
+engine: move goto response after lifecycle
 The response could be read before network handling caught up.
 Waiting for lifecycle first removes that timing window.
 ```
@@ -226,12 +226,12 @@ ordering changes are easier to test and easier to roll back.
 +	return frame.responseByDocumentID(docID), nil
 ```
 
-### 6) `browser: move waitnav response after lifecycle`
+### 6) `engine: move waitnav response after lifecycle`
 
 Original commit message:
 
 ```text
-browser: move waitnav response after lifecycle
+engine: move waitnav response after lifecycle
 WaitForNavigation had the same ordering problem as Goto.
 Applying the same ordering keeps both paths consistent.
 ```
@@ -256,12 +256,12 @@ separate avoids conflating two API contracts in one commit.
 +	}
 ```
 
-### 7) `browser: rebind request to matching doc`
+### 7) `engine: rebind request to matching doc`
 
 Original commit message:
 
 ```text
-browser: rebind request to matching doc
+engine: rebind request to matching doc
 During redirects, requests can land on current or pending documents.
 Rebinding by document ID keeps the association correct.
 ```
