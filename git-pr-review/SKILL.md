@@ -27,7 +27,7 @@ Extract every testable claim from PR description (test plans, behavioral asserti
 
 Verify each independently. No stop at first bug. Never assume. Lack info? Run code, experiment, search docs/web.
 
-Chase root cause. Trace every symptom to root. Exhaust all WHY chains. Fix = root cause only. Never suggest symptom patch.
+For all cases below, chase root cause and reproduce. Trace every symptom to root. Exhaust all WHY chains. Fix = root cause only. Never suggest symptom patch. Reproduce bug or validate addition. Checkout base → run tests/repro steps → record result. Checkout PR branch → run same. Base already passes → wrong fix or wrong test path. PR still fails → incomplete. Try hard to reproduce. Try everything. Tip: Use Docker to simulate environments (e.g. resource restricted) for reproduction.
 
 - **Config/infra**: reproduce locally. Docker, dry-run, validation. Run against PR author's actual repo/branch.
 - **Code**: trace paths. Callers, edge cases, error handling. Run PR author's changes exact setup. Go: `go vet`, `golangci-lint`, `go test` affected packages.
