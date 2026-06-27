@@ -148,7 +148,7 @@ Closes #NNN
 10. Only add a Mermaid diagram when the interaction is genuinely hard to explain in
     words (e.g., multi-party protocols, complex state machines). If two sentences
     can explain it, skip the diagram.
-11. Do NOT hard-wrap lines in PR descriptions. Let each sentence or logical phrase flow as a single line. GitHub renders markdown with its own wrapping, so hard line breaks mid-paragraph look broken on GitHub.
+11. Do NOT hard-wrap paragraphs: GitHub renders a single newline in a PR/issue body as a `<br>`, so keep each paragraph on one physical line (blank lines still separate paragraphs) and let it soft-wrap into a block; verify the raw body with `gh pr view <n> --json body -q .body | cat -A`.
 
 ## Tone
 
@@ -159,7 +159,14 @@ Closes #NNN
 - Use direct sentences with concrete nouns and verbs.
 - Use neutral confidence: state what is known and ask when uncertain.
 
-## Common Mistakes to Avoid
+## Public Repos: Keep Internal Details Out
+
+On a public repo the title, body, branch name, commit message, and references are all world-visible, so keep every internal-only specific out of them and describe only user-observable behavior.
+
+- No internal service, component, repo, or supervisor names, internal issue/run/test IDs, or signal/timeout/knob names that only mean something inside the company's infra.
+- If a sentence only makes sense to someone who knows the internal architecture, it's a leak, cut it.
+- The branch name and commit message count too: an internal run ID in a branch name leaks the same as one in the body.
+- When unsure whether something is internal, treat it as internal; leaks are hard to undo once public.
 
 - Do NOT list internal refactors (helper functions, mutex renames, type extractions)
   in the description. Those belong in the diff, not the PR summary.
@@ -188,6 +195,8 @@ Closes #NNN
 - When referencing a specific commit, link it: [`foo@abc123`](https://github.com/org/foo/commit/abc123). Don't say "the previous hash" or "the old commit" without identifying it.
 - Cross-repo PR/issue references must include the org/repo prefix: org/repo#123. Bare #NNN only works for the current repo. Don't backtick issue/PR references or GitHub won't auto-link them.
 - In the Related section, list each reference on its own line. Don't group with "Depends on" or "Related to" prefixes unless the relationship is genuinely important context.
+- Before referencing another repo's issue, check its visibility (`gh repo view <org/repo> --json visibility`): from a public repo a reference into a private/internal repo is world-visible plain text and leaks that repo's name, so confirm it's intended.
+- `Closes org/repo#n` from a public repo into a private/internal one won't fill the linked-issues panel or auto-close on merge, so close it from the target repo's side instead.
 
 ## Examples
 
