@@ -18,6 +18,15 @@ Review a GitHub PR, leave the feedback as inline draft comments, and never send 
 
 Run this as a reviewer/judge workflow (the Workflow tool): reviewer subagents find the issues, then an independent judge tries to refute each one before it survives. Demand evidence, not conclusions, and re-verify the survivors yourself.
 
+Each reviewer and judge writes its full work to `$STATE/evidence/<agent>.md` before returning, and returns that path with its findings. Tell every subagent, in its prompt, that this file takes everything raw and nothing summarized:
+
+- Every code path it traced, quoted verbatim with `file:line`, not described.
+- Every experiment and test it ran: the complete test or script source, the exact command line, the working directory and any overlay or setup, and the full unedited output, failures and passes alike.
+- Every dead end and refuted theory, with why the evidence killed it.
+- What it never checked, so the next reader doesn't mistake silence for coverage.
+
+Length is not a concern here and paraphrase is the failure mode. The returned findings are the summary; the file is the raw record that lets you re-verify, re-anchor, reword, or defend any comment weeks later without running the review again. Anything only in a subagent's head is lost the moment it returns, so if an agent returns without its file, or with a thin one, send it back to write the full version before you use its findings.
+
 Check that the change is idiomatic, simple, and correct, and that it fully solves the linked issue. Read the linked issue(s) and anything the user asked you to check against (a reference implementation, a spec), and confirm the behavior matches.
 
 Verify, don't skim. Isolate the PR in a throwaway worktree (`git fetch origin pull/<pr>/head:pr-<pr>` then `git worktree add /tmp/pr-<pr> pr-<pr>`; remove it after), run the affected tests there, and trace the call paths. Never call something broken or correct without checking it; "probably" means you haven't verified yet. A hazard you can reason through but can't trigger isn't a dead end: raise it as the open question it is, don't drop it for want of a repro.
@@ -37,10 +46,12 @@ Write every comment in the voice in [§ Voice](#voice): concise, casual, like a 
 - `STATE=${XDG_STATE_HOME:-$HOME/.local/state}/git-pr-review/<owner>-<repo>-<pr>/`. Your scratchpad, not a copy of the PR; keep only what GitHub doesn't (your reasoning and the user's instructions).
 - `review.json`: review id, last-seen head SHA, last comment cursor, and the user's standing instructions for this review.
 - `notes.jsonl`, keyed by the GitHub review-comment id: why you flagged it, the judge verdict, your current take (`open`/`resolved`/`dropped`), and what the author's replies changed.
+- `evidence/<agent>.md`: one file per reviewer/judge subagent, raw and unsummarized: quoted code with `file:line`, full test sources, exact commands, unedited output, dead ends, and what went unchecked. Written by the subagent itself, complete enough that someone else can reproduce every claim from the file alone. Keep these; they outlive the subagents.
 - No tokens, no secrets.
 
 ## Post the draft (private)
 
+- Before any post or repost, spawn a fresh subagent to proofread: it reads this entire SKILL.md, then the summary body and every comment in `comments.json`, checks them against [§ Voice](#voice) and its rules, and returns corrected bodies. Post the corrected version, not your draft.
 - Put the comments in `comments.json` and run `scripts/post_pending_review.py <owner/repo> <pr> comments.json [--body "summary"]`. It resolves the head SHA, posts one PENDING review, and checks the drafts aren't public.
 - Anchor each comment to a diff line (`RIGHT` for added/context, `LEFT` for removed) or GitHub rejects it (422). If the code isn't in the diff, anchor to the nearest changed line and say so. Pull valid lines from the `files` patches. Mechanics: [references/pending-review.md](references/pending-review.md).
 - Confirm `state=PENDING` and `published delta: 0`, save the ids, and hand the user the Files-changed URL. Don't submit. To change a draft, delete and repost: `gh api -X DELETE repos/{owner}/{repo}/pulls/reviews/{review_id}`, then rerun.
