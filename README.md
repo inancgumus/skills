@@ -15,6 +15,7 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [git-pr-review](git-pr-review/) | Review PRs by verifying claims and posting inline reviews via `gh` |
 | [git-split](git-split/) | Split big commits into smaller, atomic ones |
 | [heartbeat](heartbeat/) | Per-person summary of what each team member worked on over a window, from GitHub, Slack, and Google Workspace |
+| [writing-style](writing-style/) | Write prose like an experienced engineer talking to another engineer |
 
 ## Install
 
@@ -69,3 +70,6 @@ The script is idempotent — run it after cloning on a new machine, or after add
 - `gh` CLI
 - [`gws`](https://github.com/googleworkspace/cli) (Google Workspace CLI)
 - [`slackcli`](https://github.com/grafana/slackcli)
+
+**writing-style**
+- No dependencies
