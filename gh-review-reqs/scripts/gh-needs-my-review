@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Lists open PRs that need my review attention.
+#
+# A PR qualifies when all of these hold:
+#   - I'm in its active requested reviewers. GitHub removes me from that list
+#     when I submit a review and re-adds me on re-request, so this covers
+#     "reviewed but re-requested" without any comment/review exclusions.
+#   - It isn't a draft or a renovate PR.
+#   - Its required approvals aren't met yet (reviewDecision != APPROVED).
+#   - Nobody else is blocking it with changes-requested. My own stale
+#     changes-requested review doesn't count: a re-request means the author
+#     wants me back.
+#   - In repos with no required-review rules: nobody else has reviewed it yet.
+set -euo pipefail
+
+me=$(gh api user --jq .login)
+
+gh search prs "user-review-requested:@me" --state=open --draft=false --limit 100 \
+  --json repository,number,author \
+  --jq '.[] | select(.author.login | test("renovate"; "i") | not)
+            | "\(.repository.nameWithOwner) \(.number)"' |
+while read -r repo num; do
+  gh pr view "$num" --repo "$repo" \
+    --json url,title,author,reviewDecision,latestReviews,updatedAt |
+  jq -r --arg me "$me" '
+    (.reviewDecision // "") as $decision
+    | [.latestReviews[]
+       | select(.author.login != $me)
+       | select(.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "COMMENTED")
+      ] as $others
+    | select($decision != "APPROVED")
+    | select([$others[] | select(.state == "CHANGES_REQUESTED")] | length == 0)
+    | select($decision == "REVIEW_REQUIRED" or $decision == "CHANGES_REQUESTED"
+             or ($others | length) == 0)
+    | (if [.latestReviews[] | select(.author.login == $me)] | length > 0
+       then "  (re-requested)" else "" end) as $tag
+    | "\(.updatedAt[0:10])  \(.url)  \(.title)  [\(.author.login)]\($tag)"
+  '
+done | sort -r

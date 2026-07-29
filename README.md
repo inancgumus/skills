@@ -14,6 +14,7 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [git-pr](git-pr/) | Write PR descriptions in engineer-to-engineer tone |
 | [git-pr-review](git-pr-review/) | Review PRs by verifying claims and posting inline reviews via `gh` |
 | [git-split](git-split/) | Split big commits into smaller, atomic ones |
+| [gh-review-reqs](gh-review-reqs/) | List open GitHub PRs that need your review attention, across all repos |
 | [heartbeat](heartbeat/) | Per-person summary of what each team member worked on over a window, from GitHub, Slack, and Google Workspace |
 | [writing-style](writing-style/) | Write prose like an experienced engineer talking to another engineer |
 
@@ -65,6 +66,10 @@ The script is idempotent — run it after cloning on a new machine, or after add
 
 **git-split**
 - No dependencies
+
+**gh-review-reqs**
+- `gh` CLI
+- `jq`
 
 **heartbeat**
 - `gh` CLI
