@@ -1,6 +1,6 @@
 ---
 name: git-pr-review
-description: Review a GitHub pull request. Use when asked to review a PR, given a PR URL, told to "review this", or asked to annotate a diff or leave draft comments without sending a review.
+description: Review a GitHub pull request. Use when asked to review a PR, given a PR URL, told to "review this", asked to annotate a diff or leave draft comments without sending a review, or asked to handle the author's replies to an earlier review.
 user_invocable: true
 command: pr-review
 ---
@@ -13,6 +13,7 @@ Review a GitHub PR, leave the feedback as inline draft comments, and never send 
 - Ask what else they want you to check beyond the basics, since it changes per review: parity with a reference implementation, a particular concern, an area to focus on or skip. Take the answer as your standing instructions for this review.
 - Draft only. Build a pending review; submit or discard only when the user says so.
 - Report to the user, never to the PR author. Even an "LGTM" is for the user.
+- Besides the findings, make the user understand the change itself: open the report with a plain-terms explanation of what the PR does and why, as a short scenario (what the user of the software gets, before and after). No internals, no jargon; the user should get it without reading the diff.
 
 ## The review
 
@@ -33,7 +34,7 @@ Verify, don't skim. Isolate the PR in a throwaway worktree (`git fetch origin pu
 
 Leave the feedback as inline draft comments, each anchored to the line it's about. Keep the review pending/draft. Never send it to the PR unless the user tells you to.
 
-Write every comment in the voice in [§ Voice](#voice): concise, casual, like a coworker, what and why, super clear. Ask a question instead of a directive where it fits, but don't overdo it. One finding per comment, no titles, no labels like `test (nit):` or `naming:`. Backtick repo names, code, symbols, and paths. Clean markdown. Apply the `humanizer` and `stop-slop` skills.
+Every comment MUST use the voice in [§ Voice](#voice); there is no plain mode and no skipping it: concise, casual, like a coworker, what and why, super clear. Ask a question instead of a directive where it fits, but don't overdo it. One finding per comment, no titles, no labels like `test (nit):` or `naming:`. Backtick repo names, code, symbols, and paths. Clean markdown. Apply the `humanizer` and `stop-slop` skills.
 
 ## Gather
 
@@ -47,6 +48,7 @@ Write every comment in the voice in [§ Voice](#voice): concise, casual, like a 
 - `review.json`: review id, last-seen head SHA, last comment cursor, and the user's standing instructions for this review.
 - `notes.jsonl`, keyed by the GitHub review-comment id: why you flagged it, the judge verdict, your current take (`open`/`resolved`/`dropped`), and what the author's replies changed.
 - `evidence/<agent>.md`: one file per reviewer/judge subagent, raw and unsummarized: quoted code with `file:line`, full test sources, exact commands, unedited output, dead ends, and what went unchecked. Written by the subagent itself, complete enough that someone else can reproduce every claim from the file alone. Keep these; they outlive the subagents.
+- `replies.json` (written by `fetch_replies.py`) and `replies-out.json` (drafts for `post_replies.py`): the follow-up round's input and output.
 - No tokens, no secrets.
 
 ## Post the draft (private)
@@ -60,13 +62,26 @@ Write every comment in the voice in [§ Voice](#voice): concise, casual, like a 
 
 - Never POST a review event on your own. When the user says to: `gh api -X POST repos/{owner}/{repo}/pulls/{pr}/reviews/{review_id}/events -f event=COMMENT` (or `APPROVE` / `REQUEST_CHANGES`).
 
+## Follow-up (the author replied)
+
+The review already happened; this round checks whether it was answered well. Rebuild the context first: read the earlier findings in `evidence/` and `notes.jsonl`, get a full understanding of the PR itself, and reread every comment we left. Then check each comment against the current head: applied correctly, deferred with a reason, or not addressed. Review the fix commits like any change; a fix can be wrong, half-done, or break something else.
+
+- Start from the state store: `review.json`, `comment_ids.json`, and `evidence/` already hold the reviewed head SHA, the thread roots, the user's standing instructions, and the repros.
+- `scripts/fetch_replies.py <owner/repo> <pr>` fetches the replies, pairs them to our threads, writes `$STATE/replies.json`, and warns when the head moved since the review.
+- Expect a rebase. Commit SHAs cited in replies may be gone; fetch the current head (`git fetch origin pull/<pr>/head:pr-<pr>`) and verify each claim by content there, matching the cited commits by subject.
+- Verify every "fixed in X" claim and review the fix itself; never take the reply's word. One subagent per fix area, each in its own detached worktree (`git worktree add --detach <dir> <head-sha>`, removed after), each writing `evidence/<agent>.md` as in [§ The review](#the-review). Re-run the repros from `evidence/`: a fixed bug's repro must stop failing, and a new test must pin the fix. Hold each fix commit to the original review's bar (correct, simple, idiomatic, no new bugs); anything it breaks or leaves half-done becomes a new draft comment. Fact-check the excuses too: "predates this PR" means diffing that code against the merge-base; "also affects X" means tracing X's path.
+- Report to the user as a checklist first: one row per original comment, marked addressed / deferred with the reason / not addressed, then the questions the author aimed at the user. Verification detail comes after the checklist, never instead of it.
+- The author's questions are the user's to answer; wait for their decision. Then draft the reply bodies into `$STATE/replies-out.json`, proofread them with a fresh subagent against [§ Voice](#voice), and run `scripts/post_replies.py <owner/repo> <pr> replies-out.json`: it posts into the threads and records each outcome in `notes.jsonl`. Replies publish immediately, so only run it with user-approved bodies.
+
 ## Watch loop (only when the user asks)
 
 - Run with the `/loop` skill. Each tick, compare against `review.json`'s last-seen head SHA and comment cursor; no new commits and no new replies means wait.
-- On new activity, re-fetch the branch, re-verify any finding the new commits touch, and check whether the author's replies resolve or rebut open findings. When a commit moves a line, re-anchor the comment; when the code is gone, mark it `resolved` or re-target it. Delete+repost so a later send lands right.
+- On new activity, re-fetch the branch, re-verify any finding the new commits touch, and handle replies per [§ Follow-up](#follow-up-the-author-replied). When a commit moves a line, re-anchor the comment; when the code is gone, mark it `resolved` or re-target it. Delete+repost so a later send lands right.
 - Report to the user, not the PR. Draft any reply into the store and get the user's OK before sending. Stop when the user says so, or when the PR merges or closes.
 
 ## Voice
+
+This section is mandatory for every body that lands on GitHub: review comments, the summary, and replies in the follow-up round. No body posts without the proofread pass against it.
 
 Write every comment the way these examples do. They are real review comments, verbatim, from many different PRs. Absorb the register, the hedging, and the shape; never reuse the words. Re-read them before each comment.
 
