@@ -145,6 +145,65 @@ def live_sessions():
     return out
 
 
+ITERM_TABS = """tell application "iTerm2"
+  set out to ""
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        set out to out & (tty of s) & " ::: " & (name of s) & linefeed
+      end repeat
+    end repeat
+  end repeat
+  return out
+end tell"""
+
+
+def iterm_running():
+    out = subprocess.run(["ps", "-eo", "comm="], capture_output=True, text=True)
+    return "iTerm.app/Contents/MacOS/iTerm2" in out.stdout
+
+
+def iterm_tab_names():
+    """Map tty device -> iTerm tab name, so a live session can name its own tab."""
+    if not iterm_running():  # asking AppleScript would launch iTerm
+        return {}
+    try:
+        out = subprocess.run(["osascript", "-e", ITERM_TABS], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    tabs = {}
+    for line in out.stdout.splitlines():
+        tty, sep, name = line.partition(" ::: ")  # `tab` names a class inside iTerm's dictionary
+        if sep and tty.startswith("/dev/"):
+            tabs[tty] = name.strip()
+    return tabs
+
+
+def ttys_of(pids):
+    """Map pid -> tty device. The claude process shares the tty with its tab."""
+    if not pids:
+        return {}
+    out = subprocess.run(["ps", "-o", "pid=,tty=", "-p", ",".join(str(p) for p in pids)],
+                         capture_output=True, text=True)
+    ttys = {}
+    for line in out.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] != "??":
+            ttys[int(parts[0])] = "/dev/" + parts[1]
+    return ttys
+
+
+def attach_tabs(rows):
+    """Fill in the iTerm tab name of every session that is open right now."""
+    pids = [r["live"]["pid"] for r in rows if r["live"]]
+    ttys = ttys_of(pids)
+    tabs = iterm_tab_names() if ttys else {}
+    for r in rows:
+        tty = ttys.get(r["live"].get("pid")) if r["live"] else None
+        r["tty"] = tty or ""
+        r["tab"] = tabs.get(tty, "")
+
+
 def collect(args):
     if not PROJECTS_DIR.is_dir():
         sys.exit("no sessions found: %s does not exist" % PROJECTS_DIR)
@@ -180,6 +239,11 @@ def collect(args):
     # Numbering follows the filtered order so `list` and `open` agree on indexes.
     for i, info in enumerate(keep, 1):
         info["index"] = i
+    if args.no_iterm:
+        for info in keep:
+            info["tty"] = info["tab"] = ""
+    else:
+        attach_tabs(keep)
     return keep
 
 
@@ -195,12 +259,15 @@ def when(ts):
 
 def render(rows, width):
     head = ["#", "NAME", "LAST MESSAGE", "STATE", "CWD", "SESSION ID", "PROMPT"]
+    tabs = any(r.get("tab") for r in rows)
+    if tabs:
+        head.insert(4, "ITERM TAB")
     body = []
     for r in rows:
         prompt = r["last_prompt"] or r["first_prompt"] or "-"
         if width and len(prompt) > width:
             prompt = prompt[: width - 1] + "…"
-        body.append([
+        row = [
             str(r["index"]),
             r["name"] or "-",
             when(r["last_ts"]) + ("~" if r.get("ts_from_mtime") else ""),
@@ -208,7 +275,10 @@ def render(rows, width):
             short_cwd(r["cwd"]),
             r["id"],
             prompt,
-        ])
+        ]
+        if tabs:
+            row.insert(4, r.get("tab") or "")
+        body.append(row)
     widths = [max(len(row[i]) for row in [head] + body) for i in range(len(head))]
     lines = []
     for row in [head] + body:
@@ -274,45 +344,87 @@ def resolve(rows, selectors, limit):
     return picked, missing
 
 
-def applescript(rows, new_window):
-    cmds = ["cd %s && claude --resume %s" % (shlex.quote(r["cwd"]), r["id"]) for r in rows]
+def resume_command(row, label):
+    """The command line a new tab runs.
 
-    def quoted(cmd):
-        return '"%s"' % cmd.replace("\\", "\\\\").replace('"', '\\"')
+    The tab name is set from inside the command line, not through AppleScript:
+    a zsh preexec hook retitles the tab when the command starts, and it would
+    win against a name set before that. Claude Code retitles the tab too while
+    it works, so its title updates are switched off for a named tab.
+    """
+    cmd = "cd %s && " % shlex.quote(row["cwd"])
+    if label:
+        cmd += "printf '\\033]0;%%s\\007' %s && CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1 " % shlex.quote(label)
+    return cmd + "claude --resume %s" % row["id"]
 
-    def in_new_tab(cmd, target):
+
+def applescript(rows, labels, new_window):
+    cmds = [resume_command(r, l) for r, l in zip(rows, labels)]
+
+    def quoted(text):
+        return '"%s"' % text.replace("\\", "\\\\").replace('"', '\\"')
+
+    def run_in(session_expr, cmd, label, indent):
         return [
-            "  tell %s" % target,
-            "    set t to (create tab with default profile)",
-            "    tell current session of t",
-            "      write text %s" % quoted(cmd),
-            "    end tell",
-            "  end tell",
-        ]
-
-    def in_fresh_window(cmd, indent="  "):
-        return [
-            indent + "set w to (create window with default profile)",
-            indent + "tell current session of current tab of w",
+            indent + "tell %s" % session_expr,
             indent + "  write text %s" % quoted(cmd),
             indent + "end tell",
         ]
 
+    def in_new_tab(cmd, label, target, indent="  "):
+        return ([indent + "tell %s" % target,
+                 indent + "  set t to (create tab with default profile)"]
+                + run_in("current session of t", cmd, label, indent + "  ")
+                + [indent + "end tell"])
+
+    def in_fresh_window(cmd, label, indent="  "):
+        return ([indent + "set w to (create window with default profile)"]
+                + run_in("current session of current tab of w", cmd, label, indent))
+
     lines = ['tell application "iTerm2"']
-    for i, cmd in enumerate(cmds):
+    for i, (cmd, label) in enumerate(zip(cmds, labels)):
         if i == 0 and new_window:
-            lines += in_fresh_window(cmd)
+            lines += in_fresh_window(cmd, label)
         elif i == 0:
             # A first tab needs a window to live in; iTerm may have none open.
             lines += ["  if (count of windows) = 0 then"]
-            lines += in_fresh_window(cmd, "    ")
+            lines += in_fresh_window(cmd, label, "    ")
             lines += ["  else"]
-            lines += ["  " + l for l in in_new_tab(cmd, "current window")]
+            lines += in_new_tab(cmd, label, "current window", "    ")
             lines += ["  end if"]
         else:
-            lines += in_new_tab(cmd, "w" if new_window else "current window")
+            lines += in_new_tab(cmd, label, "w" if new_window else "current window")
     lines.append("end tell")
     return "\n".join(lines), cmds
+
+
+def tab_label(row, source, budget=28):
+    if source == "name":
+        return row["name"] or row["id"][:8]
+    if source == "cwd":
+        return Path(row["cwd"]).name
+    if source == "id":
+        return row["id"][:8]
+    text = row["last_prompt"] or row["first_prompt"] or row["name"] or row["id"][:8]
+    if len(text) <= budget:
+        return text
+    cut = text[:budget].rsplit(" ", 1)[0]
+    return (cut or text[:budget]) + "…"
+
+
+def labels_for(rows, args):
+    """One tab name per session: what the user asked for, else derived, else none."""
+    if args.tab_name:
+        given = list(args.tab_name)
+        if len(given) not in (1, len(rows)):
+            sys.exit("got %d --tab-name values for %d sessions: pass one, or one each"
+                     % (len(given), len(rows)))
+        if len(given) == 1 and len(rows) > 1:
+            return ["%s %d" % (given[0], i) for i in range(1, len(rows) + 1)]
+        return given
+    if args.name_tabs:
+        return [tab_label(r, args.name_tabs) for r in rows]
+    return [""] * len(rows)
 
 
 def cmd_open(args):
@@ -334,13 +446,17 @@ def cmd_open(args):
             print("warning: %s no longer exists, opening %s in ~" % (r["cwd"], r["id"]), file=sys.stderr)
             r["cwd"] = str(Path.home())
 
-    script, cmds = applescript(picked, args.window)
+    labels = labels_for(picked, args)
+    script, cmds = applescript(picked, labels, args.window)
     if args.dry_run:
-        print("\n".join(cmds))
+        for label, cmd in zip(labels, cmds):
+            print("%s%s" % ("[tab: %s] " % label if label else "", cmd))
         return
     subprocess.run(["osascript", "-e", script], check=True)
-    for r in picked:
-        print("opened %-14s %s  %s" % (r["name"] or "-", r["id"], short_cwd(r["cwd"])))
+    for r, label in zip(picked, labels):
+        print("opened %-14s %s  %s%s"
+              % (r["name"] or "-", r["id"], short_cwd(r["cwd"]),
+                 "  tab: %s" % label if label else ""))
 
 
 def main():
@@ -354,6 +470,8 @@ def main():
                        help="keep the session this command runs in (dropped by default)")
         p.add_argument("--skip-live", action="store_true", help="drop sessions that are open right now")
         p.add_argument("--cwd", metavar="PATH", help="keep only sessions started under PATH")
+        p.add_argument("--no-iterm", action="store_true",
+                       help="skip the iTerm lookup that finds which tab a live session runs in")
 
     p_list = sub.add_parser("list", help="show recent sessions, newest message first")
     shared(p_list)
@@ -371,6 +489,13 @@ def main():
                         help="index (3), range (1-3), session id or prefix, or name")
     p_open.add_argument("-n", "--limit", type=int, default=1,
                         help="with no selector, open the N most recent (default 1)")
+    p_open.add_argument("--tab-name", action="append", default=[], metavar="NAME",
+                        help="name the new iTerm tab; pass one per session, or one for all "
+                             "(numbered 1..N)")
+    p_open.add_argument("--name-tabs", nargs="?", const="prompt",
+                        choices=["prompt", "name", "cwd", "id"], metavar="SOURCE",
+                        help="name each tab automatically from its prompt (default), Claude "
+                             "session name, directory, or id")
     p_open.add_argument("--window", action="store_true", help="open a new iTerm window instead of tabs")
     p_open.add_argument("--force", action="store_true", help="resume even if the session is already open")
     p_open.add_argument("--dry-run", action="store_true", help="print the resume commands, open nothing")

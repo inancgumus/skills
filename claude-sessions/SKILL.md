@@ -25,9 +25,14 @@ scripts/cc-sessions list --skip-live          # hide sessions already open in a 
 scripts/cc-sessions list --json               # same data, machine-readable
 ```
 
-Columns: index, session name, last message date (local time), state, working
-directory, session id, last prompt typed. The session running the command is
-dropped from the list; add `--include-current` to keep it.
+Columns: index, session name, last message date (local time), state, iTerm tab
+name, working directory, session id, last prompt typed. The session running the
+command is dropped from the list; add `--include-current` to keep it.
+
+The `ITERM TAB` column shows up only for sessions that are open right now, and
+only when iTerm is already running. It is the name of the tab the session sits
+in, matched by tty, so the user can find the tab they mean. `--no-iterm` skips
+that lookup.
 
 Report the output as a markdown table, keeping the index numbers, because the
 user selects sessions by index. Keep the session name and the last message date
@@ -55,6 +60,29 @@ scripts/cc-sessions open 1 --dry-run             # print the commands, open noth
 ```
 
 Each tab runs `cd <the session's working directory> && claude --resume <id>`.
+
+## Naming the tabs
+
+Tabs keep Claude Code's own title by default (`✳ <session name>`, which also
+shows whether it is working). To label them instead:
+
+```bash
+scripts/cc-sessions open 3 --tab-name "kb: k6 notes"       # one tab, one name
+scripts/cc-sessions open 1 2 --tab-name kb --tab-name docs # a name per session
+scripts/cc-sessions open 1-3 --tab-name review             # review 1, review 2, review 3
+scripts/cc-sessions open 1-3 --name-tabs                   # from each session's prompt
+scripts/cc-sessions open 1-3 --name-tabs cwd               # or name, cwd, id
+```
+
+A named tab gets `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1`, so Claude stops
+rewriting the title and the name stays put. The name is written by the tab
+itself with an escape sequence rather than by AppleScript, because a zsh
+`preexec` hook retitles the tab when the command starts and would otherwise
+overwrite it. Whatever iTerm's profile appends to a tab title (the running job
+name, for example) still appears after the name.
+
+Ask which label the user wants when it is not obvious. They name tabs to know
+what each one is about, so a name they chose beats one derived from a prompt.
 
 Indexes come from the same ordering `list` produces, and that ordering shifts
 whenever a session receives a new message. If minutes passed since the last
