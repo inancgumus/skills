@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+"""List recent Claude Code sessions and resume them in new iTerm tabs.
+
+Data comes from the transcripts under ~/.claude/projects/<project>/<session-id>.jsonl
+and the live-process index under ~/.claude/sessions/*.json.
+"""
+
+import argparse
+import json
+import os
+import shlex
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude"))
+PROJECTS_DIR = CLAUDE_DIR / "projects"
+LIVE_DIR = CLAUDE_DIR / "sessions"
+
+TAIL_BYTES = 512 * 1024  # enough to hold the closing records of a long session
+HEAD_BYTES = 256 * 1024
+
+# Prompts wrapped in these markers are slash-command plumbing, not something the
+# user typed as a topic, so they make useless labels in the list.
+NOISE = ("<command-name>", "<local-command", "<system-reminder>", "Caveat:", "<bash-")
+
+
+def records(path, size, from_end):
+    """Parse whole JSON lines from one end of a file. Partial lines are dropped."""
+    with path.open("rb") as fh:
+        if from_end:
+            fh.seek(0, os.SEEK_END)
+            start = max(0, fh.tell() - size)
+            fh.seek(start)
+            blob = fh.read()
+            if start:
+                blob = blob.split(b"\n", 1)[-1]
+        else:
+            blob = fh.read(size)
+            if len(blob) == size:
+                blob = blob.rsplit(b"\n", 1)[0]
+    out = []
+    for line in blob.splitlines():
+        try:
+            out.append(json.loads(line))
+        except (ValueError, UnicodeDecodeError):
+            continue
+    return out
+
+
+def text_of(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        return "\n".join(p for p in parts if p)
+    return ""
+
+
+def clean(prompt):
+    prompt = " ".join(text_of(prompt).split())
+    if not prompt or prompt.startswith(NOISE):
+        return ""
+    return prompt
+
+
+def project_cwd(project_dir):
+    """Recover a working directory from a project dir name (a path with / as -)."""
+    return "/" + project_dir.name.lstrip("-").replace("-", "/")
+
+
+def probe(path):
+    """Collect what the list needs from one transcript."""
+    info = {
+        "id": path.stem,
+        "name": "",
+        "cwd": "",
+        "last_ts": None,
+        "last_prompt": "",
+        "first_prompt": "",
+        "size": path.stat().st_size,
+    }
+
+    tail = records(path, TAIL_BYTES, from_end=True)
+    for rec in reversed(tail):
+        if not info["name"] and rec.get("type") in ("custom-title", "agent-name"):
+            info["name"] = rec.get("customTitle") or rec.get("agentName") or ""
+        if not info["last_prompt"] and rec.get("type") == "last-prompt":
+            info["last_prompt"] = clean(rec.get("lastPrompt", ""))
+        if not info["cwd"] and rec.get("cwd"):
+            info["cwd"] = rec["cwd"]
+        # Only real turns count as messages; bookkeeping records also carry timestamps.
+        if info["last_ts"] is None and rec.get("timestamp") and rec.get("type") in ("user", "assistant"):
+            info["last_ts"] = rec["timestamp"]
+
+    for rec in records(path, HEAD_BYTES, from_end=False):
+        if not info["cwd"] and rec.get("cwd"):
+            info["cwd"] = rec["cwd"]
+        if rec.get("type") == "user":
+            first = clean(rec.get("message", {}).get("content", ""))
+            if first:
+                info["first_prompt"] = first
+                break
+
+    if info["last_ts"] is None:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        info["last_ts"] = mtime.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        info["ts_from_mtime"] = True
+    if not info["cwd"]:
+        info["cwd"] = project_cwd(path.parent)
+    return info
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except (OSError, TypeError):
+        return False
+    return True
+
+
+def live_sessions():
+    """Map session id -> {name, status, pid} for sessions whose process still runs."""
+    out = {}
+    if not LIVE_DIR.is_dir():
+        return out
+    for path in LIVE_DIR.glob("*.json"):
+        try:
+            rec = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        sid, pid = rec.get("sessionId"), rec.get("pid")
+        if not sid or not alive(pid):
+            continue
+        prev = out.get(sid)
+        if prev and prev["updated"] >= rec.get("updatedAt", 0):
+            continue
+        out[sid] = {
+            "name": rec.get("name", ""),
+            "status": rec.get("status", ""),
+            "pid": pid,
+            "updated": rec.get("updatedAt", 0),
+        }
+    return out
+
+
+def collect(args):
+    if not PROJECTS_DIR.is_dir():
+        sys.exit("no sessions found: %s does not exist" % PROJECTS_DIR)
+
+    live = live_sessions()
+    current = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    excluded = {e.lower() for e in args.exclude}
+
+    rows = []
+    for path in PROJECTS_DIR.glob("*/*.jsonl"):  # one level deep skips subagent transcripts
+        if path.stat().st_size == 0:
+            continue
+        info = probe(path)
+        info["live"] = live.get(info["id"], {})
+        info["name"] = info["live"].get("name") or info["name"]
+        info["current"] = info["id"] == current
+        rows.append(info)
+
+    rows.sort(key=lambda r: r["last_ts"], reverse=True)
+
+    keep = []
+    for info in rows:
+        if info["current"] and not args.include_current:
+            continue
+        if info["live"] and args.skip_live:
+            continue
+        if excluded & {info["id"].lower(), info["name"].lower()}:
+            continue
+        if args.cwd and not info["cwd"].startswith(os.path.expanduser(args.cwd)):
+            continue
+        keep.append(info)
+
+    # Numbering follows the filtered order so `list` and `open` agree on indexes.
+    for i, info in enumerate(keep, 1):
+        info["index"] = i
+    return keep
+
+
+def short_cwd(cwd):
+    home = str(Path.home())
+    return "~" + cwd[len(home):] if cwd.startswith(home) else cwd
+
+
+def when(ts):
+    stamp = datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+    return stamp.astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+def render(rows, width):
+    head = ["#", "NAME", "LAST MESSAGE", "STATE", "CWD", "SESSION ID", "PROMPT"]
+    body = []
+    for r in rows:
+        prompt = r["last_prompt"] or r["first_prompt"] or "-"
+        if width and len(prompt) > width:
+            prompt = prompt[: width - 1] + "…"
+        body.append([
+            str(r["index"]),
+            r["name"] or "-",
+            when(r["last_ts"]) + ("~" if r.get("ts_from_mtime") else ""),
+            (r["live"].get("status") or "live") if r["live"] else "",
+            short_cwd(r["cwd"]),
+            r["id"],
+            prompt,
+        ])
+    widths = [max(len(row[i]) for row in [head] + body) for i in range(len(head))]
+    lines = []
+    for row in [head] + body:
+        lines.append("  ".join(c.ljust(w) for c, w in zip(row, widths)).rstrip())
+    return "\n".join(lines)
+
+
+def emit(text, use_pager):
+    if use_pager and sys.stdout.isatty():
+        pager = os.environ.get("PAGER", "less -SRFX")
+        proc = subprocess.Popen(shlex.split(pager), stdin=subprocess.PIPE)
+        proc.communicate(text.encode())
+        return
+    print(text)
+
+
+def cmd_list(args):
+    rows = collect(args)
+    page = rows[args.offset:] if args.all else rows[args.offset:args.offset + args.limit]
+    if args.json:
+        emit(json.dumps(page, indent=2, default=str), args.pager)
+        return
+    if not page:
+        print("no sessions matched")
+        return
+    text = render(page, args.prompt_width)
+    shown = args.offset + len(page)
+    if shown < len(rows):
+        text += "\n\n%d more: rerun with --offset %d" % (len(rows) - shown, shown)
+    emit(text, args.pager)
+
+
+def resolve(rows, selectors, limit):
+    """Turn selectors (index, 2-4 range, session id or prefix, name) into rows."""
+    picked, seen, missing = [], set(), []
+
+    def add(row):
+        if row["id"] not in seen:
+            seen.add(row["id"])
+            picked.append(row)
+
+    if not selectors:
+        for row in rows[:limit]:
+            add(row)
+        return picked, missing
+
+    for sel in selectors:
+        if sel.isdigit():
+            match = [r for r in rows if r["index"] == int(sel)]
+        elif "-" in sel and all(p.isdigit() for p in sel.split("-", 1)):
+            lo, hi = (int(p) for p in sel.split("-", 1))
+            match = [r for r in rows if lo <= r["index"] <= hi]
+        else:
+            low = sel.lower()
+            match = [r for r in rows if r["id"].lower() == low or r["name"].lower() == low]
+            if not match:
+                match = [r for r in rows if r["id"].lower().startswith(low)]
+        if match:
+            for row in match:
+                add(row)
+        else:
+            missing.append(sel)
+    return picked, missing
+
+
+def applescript(rows, new_window):
+    cmds = ["cd %s && claude --resume %s" % (shlex.quote(r["cwd"]), r["id"]) for r in rows]
+
+    def quoted(cmd):
+        return '"%s"' % cmd.replace("\\", "\\\\").replace('"', '\\"')
+
+    def in_new_tab(cmd, target):
+        return [
+            "  tell %s" % target,
+            "    set t to (create tab with default profile)",
+            "    tell current session of t",
+            "      write text %s" % quoted(cmd),
+            "    end tell",
+            "  end tell",
+        ]
+
+    def in_fresh_window(cmd, indent="  "):
+        return [
+            indent + "set w to (create window with default profile)",
+            indent + "tell current session of current tab of w",
+            indent + "  write text %s" % quoted(cmd),
+            indent + "end tell",
+        ]
+
+    lines = ['tell application "iTerm2"']
+    for i, cmd in enumerate(cmds):
+        if i == 0 and new_window:
+            lines += in_fresh_window(cmd)
+        elif i == 0:
+            # A first tab needs a window to live in; iTerm may have none open.
+            lines += ["  if (count of windows) = 0 then"]
+            lines += in_fresh_window(cmd, "    ")
+            lines += ["  else"]
+            lines += ["  " + l for l in in_new_tab(cmd, "current window")]
+            lines += ["  end if"]
+        else:
+            lines += in_new_tab(cmd, "w" if new_window else "current window")
+    lines.append("end tell")
+    return "\n".join(lines), cmds
+
+
+def cmd_open(args):
+    rows = collect(args)
+    picked, missing = resolve(rows, args.selectors, args.limit)
+    if missing:
+        sys.exit("no session matched: %s (run `cc-sessions list` first)" % ", ".join(missing))
+    if not picked:
+        sys.exit("nothing to open")
+
+    busy = [r for r in picked if r["live"]]
+    if busy and not args.force:
+        names = ", ".join((r["name"] or r["id"]) for r in busy)
+        sys.exit("already running in another tab: %s (use --force to resume anyway)" % names)
+
+    gone = [r for r in picked if not Path(r["cwd"]).is_dir()]
+    if gone:
+        for r in gone:
+            print("warning: %s no longer exists, opening %s in ~" % (r["cwd"], r["id"]), file=sys.stderr)
+            r["cwd"] = str(Path.home())
+
+    script, cmds = applescript(picked, args.window)
+    if args.dry_run:
+        print("\n".join(cmds))
+        return
+    subprocess.run(["osascript", "-e", script], check=True)
+    for r in picked:
+        print("opened %-14s %s  %s" % (r["name"] or "-", r["id"], short_cwd(r["cwd"])))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="cmd")
+
+    def shared(p):
+        p.add_argument("--exclude", action="append", default=[], metavar="NAME|ID",
+                       help="drop a session by name or id (repeatable)")
+        p.add_argument("--include-current", action="store_true",
+                       help="keep the session this command runs in (dropped by default)")
+        p.add_argument("--skip-live", action="store_true", help="drop sessions that are open right now")
+        p.add_argument("--cwd", metavar="PATH", help="keep only sessions started under PATH")
+
+    p_list = sub.add_parser("list", help="show recent sessions, newest message first")
+    shared(p_list)
+    p_list.add_argument("-n", "--limit", type=int, default=10, help="rows per page (default 10)")
+    p_list.add_argument("--offset", type=int, default=0, help="skip this many rows (paging)")
+    p_list.add_argument("--all", action="store_true", help="every session, no paging")
+    p_list.add_argument("--pager", action="store_true", help="page through $PAGER when on a terminal")
+    p_list.add_argument("--json", action="store_true", help="machine-readable output")
+    p_list.add_argument("--prompt-width", type=int, default=70, help="truncate the prompt column (0 = full)")
+    p_list.set_defaults(func=cmd_list)
+
+    p_open = sub.add_parser("open", help="resume sessions, one new iTerm tab each")
+    shared(p_open)
+    p_open.add_argument("selectors", nargs="*", metavar="SELECTOR",
+                        help="index (3), range (1-3), session id or prefix, or name")
+    p_open.add_argument("-n", "--limit", type=int, default=1,
+                        help="with no selector, open the N most recent (default 1)")
+    p_open.add_argument("--window", action="store_true", help="open a new iTerm window instead of tabs")
+    p_open.add_argument("--force", action="store_true", help="resume even if the session is already open")
+    p_open.add_argument("--dry-run", action="store_true", help="print the resume commands, open nothing")
+    p_open.set_defaults(func=cmd_open)
+
+    args = parser.parse_args()
+    if not args.cmd:
+        parser.print_help()
+        sys.exit(1)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

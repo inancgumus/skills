@@ -16,6 +16,7 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [git-split](git-split/) | Split big commits into smaller, atomic ones |
 | [gh-review-reqs](gh-review-reqs/) | List open GitHub PRs that need your review attention, across all repos |
 | [heartbeat](heartbeat/) | Per-person summary of what each team member worked on over a window, from GitHub, Slack, and Google Workspace |
+| [claude-sessions](claude-sessions/) | List recent Claude Code sessions and resume them in new iTerm tabs |
 | [writing-style](writing-style/) | Write prose like an experienced engineer talking to another engineer |
 
 ## Install
@@ -78,3 +79,7 @@ The script is idempotent — run it after cloning on a new machine, or after add
 
 **writing-style**
 - No dependencies
+
+**claude-sessions**
+- macOS with iTerm2 (new tabs are created through AppleScript)
+- `python3`
