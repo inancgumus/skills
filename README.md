@@ -18,6 +18,7 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [heartbeat](heartbeat/) | Per-person summary of what each team member worked on over a window, from GitHub, Slack, and Google Workspace |
 | [claude-sessions](claude-sessions/) | List recent Claude Code sessions and resume them in new iTerm tabs |
 | [writing-style](writing-style/) | Write prose like an experienced engineer talking to another engineer |
+| [write](write/) | Write and rewrite prose without AI tells: judge, rewrite, and flag against a rubric without changing meaning |
 
 ## Install
 

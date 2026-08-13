@@ -1,0 +1,47 @@
+{
+  "skill_name": "write",
+  "evals": [
+    {
+      "id": 0,
+      "name": "pasted-slop-rewrite",
+      "prompt": "humanize this paragraph for me, it's going in our engineering blog:\n\nIn today's fast-paced digital landscape, it's worth noting that database indexing plays a crucial role in application performance. Not only can a well-designed index significantly reduce query times — in some cases from 2.3 seconds to 40 milliseconds on our orders table — but it also serves as a testament to the importance of understanding your access patterns. Moreover, it's important to remember that indexes aren't free: every write must update them, which is why our bulk import slowed by roughly 15% after we added five new indexes. Let's dive into what this means for your team.",
+      "expected_output": "A rewrite that keeps the three concrete facts (2.3s to 40ms on the orders table, writes must update indexes, bulk import ~15% slower after five new indexes), removes all slop stems and dashes, and reports a change log plus any flags.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "hollow-flag-not-fabricate",
+      "prompt": "this reads like AI, can you fix it? it's for our product page:\n\nOur solution is designed with scalability in mind. Moreover, it is built using modern technologies that ensure reliability, performance, and security. In today's rapidly evolving landscape, organizations need tools that empower them to stay ahead of the curve.",
+      "expected_output": "The span is flagged as hollow (no mechanism, no claim) with a note on what real content it needs. No invented architecture, stack, or numbers. No injected hot takes or fake candor.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "leave-strong-prose-alone",
+      "prompt": "remove the AI slop from this:\n\nA cache miss is not free: it costs the full computation plus the bookkeeping of storing the result. Caches win only when hits outnumber misses enough to pay that tax back. On our search service, misses outnumbered hits three to one, so the cache made p99 latency worse.",
+      "expected_output": "Returned unchanged (or near-verbatim) with a statement that it already reads as strong human prose. No em dashes introduced, no meaning changes.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "file-mode-preserves-structure",
+      "prompt": "this README reads like ChatGPT wrote it. clean it up: <RUN_DIR>/outputs/README.md",
+      "expected_output": "File rewritten in place: prose cleaned of AI tells with facts (10,000 events, 250ms backoff, 120,000 events/sec, 60MB RSS) preserved, frontmatter and the go-install code block byte-identical, the outputs list intact, zero em/en dashes in prose, and a short summary plus flags in the response.",
+      "files": ["fixtures/readme-fixture.md"]
+    },
+    {
+      "id": 4,
+      "name": "draft-clean-announcement",
+      "prompt": "write a short internal announcement (about 120 words) for our #eng channel: we finished migrating CI from Jenkins to GitHub Actions. build time went from 25 min to 8 min, flaky-test reruns dropped 60%, the old Jenkins boxes get shut down Dec 1, teams must move their custom nightly jobs by Nov 24, the migration guide is at docs/ci-migration.md",
+      "expected_output": "An announcement containing all five supplied facts and nothing invented, with no em/en dashes, no marketing register, no sycophantic opener, and no rule-of-three buzz triads.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "no-edgy-slop-injection",
+      "prompt": "make this sound less like ChatGPT but keep it professional, it's for an internal wiki page:\n\nIt's important to note that code review is a valuable practice. Not only does it catch bugs early, but it also helps spread knowledge across the team. Studies at our company found reviewed PRs had 30% fewer post-release defects.",
+      "expected_output": "A tightened rewrite that keeps the 30% finding and both stated benefits, drops the hedging stems, and injects no first-person anecdotes, hot takes, performed candor, manufactured stakes, or dashes.",
+      "files": []
+    }
+  ]
+}

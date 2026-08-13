@@ -1,0 +1,22 @@
+[
+  {"query": "hey, i pasted a chatgpt draft into docs/launch-post.md and it screams AI. make it sound like a person wrote it, keep all the facts", "should_trigger": true},
+  {"query": "this reads like AI: 'In today's fast-paced world of cloud computing, it's worth noting that observability plays a crucial role...' can you fix the whole doc? it's at notes/webinar.md", "should_trigger": true},
+  {"query": "remove the ai slop from my incident writeup pls, dont change any timeline facts. file is postmortems/2024-11-07-outage.md", "should_trigger": true},
+  {"query": "humanize this paragraph for our engineering blog: 'Not only does caching improve performance, but it also serves as a testament to thoughtful design. Moreover, in today's fast-paced landscape...'", "should_trigger": true},
+  {"query": "write a short announcement for #eng that we're deprecating the v1 API on Oct 15, migration guide at docs/v2-migrate.md. don't make it sound like a bot wrote it", "should_trigger": true},
+  {"query": "my README intro sounds like every AI readme ever (leverage, seamless, robust blah blah). rewrite the intro but keep the install steps exactly as they are", "should_trigger": true},
+  {"query": "does this cover letter read like chatgpt wrote it? if parts do, fix them but keep my experience details exact", "should_trigger": true},
+  {"query": "remove the em dashes and the 'not only... but also' patterns from this design doc draft, meaning must stay identical", "should_trigger": true},
+  {"query": "marketing sent this copy and it's pure slop. tighten it up but DO NOT invent numbers we can't back up:\n\nOur cutting-edge platform empowers teams to seamlessly unlock value...", "should_trigger": true},
+  {"query": "i wrote this promo email but it sounds like a robot did it. keep the discount code FALL20 exactly as is, make the rest sound human", "should_trigger": true},
+  {"query": "write a PR description for my branch fix/retry-jitter, the diff adds jitter to the retry backoff in the uploader", "should_trigger": false},
+  {"query": "draft a design doc for moving our metrics pipeline from Graphite to Kafka + ClickHouse, target audience is the platform team", "should_trigger": false},
+  {"query": "fix the grammar in this sentence, non-native speaker here: 'He don't have access to the clusters since yesterday.'", "should_trigger": false},
+  {"query": "summarize this 40-page vendor security PDF into 5 bullets for my boss", "should_trigger": false},
+  {"query": "translate this launch announcement into German, keep the product names in English", "should_trigger": false},
+  {"query": "clean up this python script, it's messy: lots of dead code and the naming is all over the place. scripts/import_users.py", "should_trigger": false},
+  {"query": "write me a regex that strips markdown formatting (bold, italics, links) from a string in Go", "should_trigger": false},
+  {"query": "can you tell me if this student essay was written by AI? i need a yes/no verdict for the academic integrity board", "should_trigger": false},
+  {"query": "punch up this tweet so it goes viral, add some hype!! 'we shipped dark mode'", "should_trigger": false},
+  {"query": "why does chatgpt always overuse em dashes and the word delve? genuinely curious about the training reason", "should_trigger": false}
+]

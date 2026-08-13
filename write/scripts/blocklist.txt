@@ -1,0 +1,495 @@
+# Word blocklist for flag_patterns.py. One term per line; '#' starts a comment.
+# A '*' at the end of a word matches any ending (underscor* -> underscoring).
+# Spaces in multiword terms also match hyphens (battle tested -> battle-tested);
+# a hyphen written inside a term (always-on) matches only the hyphenated form.
+# Some terms also match a regex rule in flag_patterns.py; such spans carry two
+# hits and weigh heavier, which is intended for the worst offenders.
+
+# verbs
+accelerat*
+accentuat*
+acclimat*
+actualiz*
+align*
+alleviat*
+amplif*
+ascertain*
+assimilat*
+automate*
+boast*
+bolster*
+conceptualiz*
+conjectur*
+contextualiz*
+culminat*
+cultivat*
+decipher*
+deconstruct*
+delineat*
+delv*
+democratiz*
+disseminat*
+dissect*
+elevat*
+elicit*
+elucidate*
+embark*
+emphasiz*
+empower*
+encompass*
+enhanc*
+envision*
+exemplif*
+expedit*
+expound*
+facilitat*
+formulat*
+fortif*
+foster*
+galvaniz*
+garner*
+harmoniz*
+harness*
+highlight*
+illuminat*
+incubat*
+juxtapos*
+leverag*
+optimiz*
+permeat*
+proliferat*
+recapitulat*
+redefin*
+reimagin*
+revitaliz*
+revolutioniz*
+safeguard*
+showcas*
+skyrocket*
+strategiz*
+streamlin*
+substantiat*
+surpass*
+synthesiz*
+theoriz*
+transcend*
+transmut*
+underscor*
+unleash*
+unlock*
+unveil*
+utiliz*
+catalyz*
+energiz*
+honed
+maximiz*
+nestled
+propel*
+reverberat*
+spearhead*
+tailor*
+turbocharg*
+
+# adjectives
+adaptive
+agile
+ai powered
+always-on
+cloud native
+commendable
+comprehensive
+crucial
+customizable
+cutting edge
+data driven
+daunting
+dazzling
+disruptive
+dynamic
+effortless*
+efficient*
+enduring
+frictionless
+future proof*
+game chang*
+groundbreaking
+holistic
+hyper personalized
+immersive
+innovat*
+insightful
+integrated
+intelligent
+intricac*
+intricat*
+intuitive
+leading edge
+machine-first
+meticulous*
+mission critical
+multifaceted
+next generation
+next-gen*
+nuanc*
+open-ended
+paramount
+personalized
+pioneering
+pivotal
+plug and play
+predictive
+proactive*
+profound
+proprietary
+reliable
+remarkable
+results driven
+robust
+scalable
+seamless*
+smart
+state of the art
+trailblazing
+transformative
+transparent
+turnkey
+unparalleled
+unprecedented
+versatile
+vibrant
+visionar*
+amongst
+bustling
+cross functional
+ever evolving
+everchanging
+ground breaking
+indelible
+indispensable
+industry leading
+next level
+record breaking
+top notch
+
+# nouns
+beacon
+breakthrough*
+cornerstone
+findings
+homework
+interplay
+landscape
+myriad
+paradigm*
+potential
+realm*
+symphony
+synerg*
+tapestr*
+testament
+digital transformation
+efficacy
+enigma
+mindset shift
+plethora
+prowess
+subject matter expert
+thought leader*
+value add*
+
+# transitions and connectives
+furthermore
+in addition
+in conclusion
+in summary
+lastly
+moreover
+that being said
+therefore
+ultimately
+with that in mind
+on top of that
+it is also worth mentioning
+all in all
+as previously mentioned
+in essence
+to sum up
+to summarize
+
+# phrases
+10x your
+a stark reminder
+an unwavering commitment
+break* the bank
+by paying attention
+deeply rooted
+discern the truth
+discover new insights
+diverse array
+dive into
+divine revelation
+evolution of technology
+explore the world of
+gain a comprehensive understanding
+gain a deeper understanding
+in other words
+in the heart of
+in this article*
+in this blog*
+in this essay
+in this guide
+in this piece
+in this post
+in this section
+in this tutorial
+indelible mark
+inquire within
+it goes without saying
+key turning point
+most people don't realize
+nobody is talking about
+open* new avenues
+pave* the way
+prevailing trends
+shed* light on
+smooth experience
+the implications here are
+to put this in perspective
+valuable insight*
+vigilance is key
+what makes this particularly interesting
+as a professional
+as we consider
+as we examin*
+as we explor*
+at its core
+broadly speaking
+common wisdom says
+conventional thinking suggests
+data confirms
+dive deep*
+excels at
+experts agree
+final thoughts
+generally speaking
+gentle yet effective
+in a sea of
+in the world of
+industry consensus
+it is no secret
+it is well known that
+it is widely accepted
+it's essential to
+limiting beliefs
+look no further
+many believe
+more than just
+most agree
+natural solution
+navigating the
+often considered
+one could argue
+passive income
+poised to
+research suggests
+studies show
+taking everything into account
+the complexities of
+the digital age
+the digital era
+the possibilities are endless
+there are a few considerations
+wealth building
+wellness journey
+what makes this special
+worth mentioning
+you need to know
+
+# verb-object collocations (exact matches; the bare verb is legitimate)
+advocate for change
+aggregate data
+articulate your vision
+augment reality
+benchmark performance
+calibrate instruments
+collaborate effectively
+consolidate efforts
+converge ideas
+correlate data
+deliberate actions
+differentiate solutions
+elaborate on points
+emulate success
+engage the audience
+enumerate the benefits
+evaluate options
+extrapolate trends
+introspect deeply
+manifest your dreams
+mediate conflicts
+mitigate risks
+navigate challenges
+orchestrate operations
+ponder the possibilities
+quantify results
+reconcile differences
+reconfigure systems
+reiterate the importance
+retrofit technology
+scaffold learning
+scrutinize every detail
+speculate on outcomes
+validate assumptions
+
+# engagement bait and feed-speak
+and honestly
+are you paying attention
+augmenting, not replacing
+cut through the noise
+circling back
+hit different
+hit home
+human in the loop
+it matters
+it's giving
+no fluff
+quietly costing you
+read that again
+really stuck with me
+the thing is
+this changes everything
+this is the worst it will ever be
+this resonates
+you are not ready for this
+
+# agent-era tells
+battle tested
+blast radius
+elegant
+full picture
+great catch
+hygiene
+i see the issue
+load bearing
+performant
+production ready
+prose
+smoking gun
+stated fairly
+that's on me
+the honest version
+you're absolutely right
+
+# extra terms; prune freely
+adapt
+additionally
+adopt
+aimed
+alright
+alternatively
+approach
+arguably
+as well as
+beyond that
+blend
+buzzword
+can sometimes
+capture
+cash-flowing asset
+cater
+complex world
+complexities
+consequently
+deploy
+designed to
+despite
+disrupt
+dive
+diving
+drive
+dynamically
+dynamics
+effectively
+effectiveness
+enable
+encapsulates
+ensure
+essence
+essential
+even though
+evolution
+evolving
+excels
+exclusivity
+expanding
+explore
+fancy
+fine-tune
+firstly
+flagged
+fundamentally
+generally
+given that
+however
+imagine
+importantly
+in contrast
+in many cases
+in today's
+in today's digital age
+indeed
+integration
+investment opportunity
+is generally
+is largely
+is typically
+is usually
+journey
+keen
+mastering
+may often
+might be
+motivated seller
+navigate
+navigating
+not just
+not just x but y
+not only
+notably
+on the other hand
+overall
+overstated
+poised
+possess
+power
+profitable
+promptly
+rapidly
+refine
+remember that
+remnant
+revolves
+shaped
+sheer size
+shifting rapidly
+shifts
+sights unseen
+significance
+significant
+simplify
+sounds unheard
+specifically
+subsequently
+success
+tends to
+terms and phrases
+thus
+to consider
+transform
+underpins
+understanding
+vital
+whether you're a
+whispering
+wrap up
+you may want to
