@@ -60,17 +60,17 @@ State the team you resolved, then proceed.
 
 1. Resolve the roster (see *Determine the team*). Verify any stale-looking GitHub handle with `gh api users/<handle> --jq .name`.
 2. Compute `since` and `since_epoch`.
-3. Spawn **one subagent per member, in parallel, in a single message**, using `subagent_type: general-purpose` and `model: haiku` (cheap). Give each subagent:
+3. Run this as a Workflow: `parallel()` one subagent per member, using `subagent_type: general-purpose` and `model: haiku` (cheap; this is data-gathering, not judgment, so the cheap model is the right call, not a shortcut). Give each subagent:
    - the member's name, role, Slack user ID, email, GitHub handle, and the team's GitHub org;
    - the window (`since` date + `since_epoch`);
    - the absolute path to `references/research-recipe.md` and instructions to follow it exactly;
    - the absolute paths to the dumper scripts: `scripts/gh_activity.sh`, `scripts/gws_activity.sh`, and — only when the Slack source is available — `scripts/slack_activity.sh`. Each one pulls a person's full data for that source, so the subagent reads the dump first, then digs into what matters. If Slack is out of scope (see *Slack source*), tell the subagent to skip the Slack section entirely.
-4. Collect the summaries. Run the **completeness check** (the checklist at the end of `research-recipe.md`). Any member with thin or empty results gets a second targeted pass before you trust "nothing found".
+4. Collect the summaries. Run the **completeness check** (the checklist at the end of `research-recipe.md`). Any member with thin or empty results gets a second targeted pass, another `parallel()` round scoped to just those members with the specific gap named in the prompt, before you trust "nothing found".
 5. Synthesize: one section per member (1-3 theme bullets + linked artifacts), then a short team-level note (shared initiatives, org changes, releases). Every PR / issue / doc must be a markdown link.
 
 ## Spawning subagents
 
-Send all `Agent` calls in one message so they run concurrently. Tell each subagent: *"Your reply is data, not a chat message. Return markdown starting with `### <Name> (<role>)`. Only report what you find evidence for — no speculation. If a source returns nothing, say so in one line."*
+Use the Workflow tool's `parallel()` so every member's research runs concurrently, not `Agent` calls sent one by one. Tell each subagent: *"Your reply is data, not a chat message. Return markdown starting with `### <Name> (<role>)`. Only report what you find evidence for — no speculation. If a source returns nothing, say so in one line."*
 
 Pass the recipe by path; do not paste its contents into the prompt.
 
