@@ -12,12 +12,15 @@ Review a GitHub PR, leave the feedback as inline draft comments, and never send 
 - If the user hasn't named a PR, ask which one.
 - Ask what else they want you to check beyond the basics, since it changes per review: parity with a reference implementation, a particular concern, an area to focus on or skip. Take the answer as your standing instructions for this review.
 - Draft only. Build a pending review; submit or discard only when the user says so.
+- Every reviewer, judge, fix-verifier, and proofreader subagent runs at the highest-intelligence model and the highest reasoning effort available. Sonnet or haiku is for exploration only (fetching a reference, skimming a file); never let one of them find, judge, verify, or proofread.
 - Report to the user, never to the PR author. Even an "LGTM" is for the user.
 - Besides the findings, open the report with an overview that gets the user to understand the change and where it sits. See [§ Overview](#overview).
 
 ## The review
 
 Run this as a reviewer/judge workflow (the Workflow tool): reviewer subagents find the issues, then an independent judge tries to refute each one before it survives. Demand evidence, not conclusions, and re-verify the survivors yourself.
+
+Every `agent()` call that finds or judges a finding sets `model: 'opus', effort: 'max'`, the highest-intelligence model and reasoning effort Workflow offers. Never leave a reviewer or judge at an inherited or default model; that's for exploration subagents only (fetching a linked doc, skimming an unrelated file), not for anything that decides whether the code is right.
 
 Each reviewer and judge writes its full work to `$STATE/evidence/<agent>.md` before returning, and returns that path with its findings. Tell every subagent, in its prompt, that this file takes everything raw and nothing summarized:
 
@@ -184,7 +187,7 @@ Place each visual next to the short text it supports. Keep only the calls, files
 
 ## Post the draft (private)
 
-- Before any post or repost, spawn a fresh subagent to proofread: it reads this entire SKILL.md, then the summary body and every comment in `comments.json`, checks them against [§ Voice](#voice) and its rules, and returns corrected bodies. Post the corrected version, not your draft.
+- Before any post or repost, spawn a fresh subagent to proofread, same model and effort bar as [§ The review](#the-review): it reads this entire SKILL.md, then the summary body and every comment in `comments.json`, checks them against [§ Voice](#voice) and its rules, and returns corrected bodies. Post the corrected version, not your draft.
 - Put the comments in `comments.json` and run `scripts/post_pending_review.py <owner/repo> <pr> comments.json [--body "summary"]`. It resolves the head SHA, posts one PENDING review, and checks the drafts aren't public.
 - Anchor each comment to a diff line (`RIGHT` for added/context, `LEFT` for removed) or GitHub rejects it (422). If the code isn't in the diff, anchor to the nearest changed line and say so. Pull valid lines from the `files` patches. Mechanics: [references/pending-review.md](references/pending-review.md).
 - Confirm `state=PENDING` and `published delta: 0`, save the ids, and hand the user the Files-changed URL. Don't submit. To change a draft, delete and repost: `gh api -X DELETE repos/{owner}/{repo}/pulls/reviews/{review_id}`, then rerun.
@@ -200,9 +203,9 @@ The review already happened; this round checks whether it was answered well. Reb
 - Start from the state store: `review.json`, `comment_ids.json`, and `evidence/` already hold the reviewed head SHA, the thread roots, the user's standing instructions, and the repros.
 - `scripts/fetch_replies.py <owner/repo> <pr>` fetches the replies, pairs them to our threads, writes `$STATE/replies.json`, and warns when the head moved since the review.
 - Expect a rebase. Commit SHAs cited in replies may be gone; fetch the current head (`git fetch origin pull/<pr>/head:pr-<pr>`) and verify each claim by content there, matching the cited commits by subject.
-- Verify every "fixed in X" claim and review the fix itself; never take the reply's word. One subagent per fix area, each in its own detached worktree (`git worktree add --detach <dir> <head-sha>`, removed after), each writing `evidence/<agent>.md` as in [§ The review](#the-review). Re-run the repros from `evidence/`: a fixed bug's repro must stop failing, and a new test must pin the fix. Hold each fix commit to the original review's bar (correct, simple, idiomatic, no new bugs); anything it breaks or leaves half-done becomes a new draft comment. Fact-check the excuses too: "predates this PR" means diffing that code against the merge-base; "also affects X" means tracing X's path.
+- Verify every "fixed in X" claim and review the fix itself; never take the reply's word. One subagent per fix area, each in its own detached worktree (`git worktree add --detach <dir> <head-sha>`, removed after), same model and effort bar as [§ The review](#the-review), each writing `evidence/<agent>.md` as in [§ The review](#the-review). Re-run the repros from `evidence/`: a fixed bug's repro must stop failing, and a new test must pin the fix. Hold each fix commit to the original review's bar (correct, simple, idiomatic, no new bugs); anything it breaks or leaves half-done becomes a new draft comment. Fact-check the excuses too: "predates this PR" means diffing that code against the merge-base; "also affects X" means tracing X's path.
 - Report to the user as a checklist first: one row per original comment, marked addressed / deferred with the reason / not addressed, then the questions the author aimed at the user. Verification detail comes after the checklist, never instead of it.
-- The author's questions are the user's to answer; wait for their decision. Then draft the reply bodies into `$STATE/replies-out.json`, proofread them with a fresh subagent against [§ Voice](#voice), and run `scripts/post_replies.py <owner/repo> <pr> replies-out.json`: it posts into the threads and records each outcome in `notes.jsonl`. Replies publish immediately, so only run it with user-approved bodies.
+- The author's questions are the user's to answer; wait for their decision. Then draft the reply bodies into `$STATE/replies-out.json`, proofread them with a fresh subagent against [§ Voice](#voice) at the same model and effort bar as [§ The review](#the-review), and run `scripts/post_replies.py <owner/repo> <pr> replies-out.json`: it posts into the threads and records each outcome in `notes.jsonl`. Replies publish immediately, so only run it with user-approved bodies.
 
 ## Watch loop (only when the user asks)
 
