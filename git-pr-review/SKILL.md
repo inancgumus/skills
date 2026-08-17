@@ -13,7 +13,7 @@ Review a GitHub PR, leave the feedback as inline draft comments, and never send 
 - Ask what else they want you to check beyond the basics, since it changes per review: parity with a reference implementation, a particular concern, an area to focus on or skip. Take the answer as your standing instructions for this review.
 - Draft only. Build a pending review; submit or discard only when the user says so.
 - Report to the user, never to the PR author. Even an "LGTM" is for the user.
-- Besides the findings, make the user understand the change itself: open the report with a plain-terms explanation of what the PR does and why, as a short scenario (what the user of the software gets, before and after). No internals, no jargon; the user should get it without reading the diff.
+- Besides the findings, open the report with an overview that gets the user to understand the change and where it sits. See [§ Overview](#overview).
 
 ## The review
 
@@ -41,6 +41,137 @@ Every comment MUST use the voice in [§ Voice](#voice); there is no plain mode a
 - `gh pr view <pr> --comments`, `gh pr diff <pr>`, and `gh api repos/{owner}/{repo}/pulls/{pr}/files` for the patches.
 - Read the linked issue(s) and any reference the PR or the user points you at. Follow links one level deep; for a heavy reference, send a subagent and read its full return.
 - Read prior reviews and comments so you don't repeat them: `gh api repos/{owner}/{repo}/pulls/{pr}/reviews` and `.../comments`.
+
+## Overview
+
+Paraphrasing the PR's or issue's own title and description is the lazy way out: the words are already sitting there, so restating them in your own sentences proves you did no work. Do the work instead: read the code, the history around it, and the system it lives in, and arrive at the context, the change, and the intent yourself. No code-level detail anywhere in it: no function or type names, no diff mechanics, no jargon a non-reader of the code wouldn't use.
+
+- Where it sits: the broader system or feature this touches, what problem or need it's responding to, why this area matters right now (an incident, a migration, a roadmap item, a known limitation). Ground this in the linked issue and the codebase's actual state, not the PR author's framing of it.
+- Was it necessary: does the problem actually exist and matter at this scope, is this the right amount of change for it (over- or under-built), does the codebase already have a way to do this, is it fixing the root cause or working around it. This is your judgment call, backed by what you checked, not a restatement of the PR's justification.
+- Reach for a picture wherever it lands the point faster than a sentence would, and keep it to shape only here: a file tree for which area of the codebase this lives in, a high-level call tree or a Mermaid `sequenceDiagram` for how the pieces interact, a shape-only `diff` where showing what moved matters. Names and boxes, no function bodies, no field-level detail; the code-level forms in [§ Visuals](#visuals) belong in the findings, not here. Pick the smallest one that makes the point; skip it when a sentence already does the job, and don't stack several when one lands it.
+- A few sentences plus, where it helps, one picture. Not a report. This opens the review, before any findings.
+
+## Visuals
+
+A toolkit for showing rather than telling, for the overview above and for any finding that's faster to see than to read. Skip the preamble, keep the prose around it brief, and pick the smallest view that makes the point. Use one, occasionally two; never stack all of them in one review.
+
+- Logic or an algorithm, as pseudocode:
+
+```text
+on(save)
+  if content is unchanged
+    return cached result
+  write new content
+  return fresh result
+```
+
+- Runtime control flow, as a call tree:
+
+```text
+Submit
+  CreateSession
+    persistPrompt
+  StartWorker
+    Runner.Run
+```
+
+- A type's shape, as a struct tree: only the fields and interfaces that matter, with the package it lives in:
+
+```text
+Scheduler (internal/scheduler/scheduler.go)
+  Store interface
+  jobs chan Job
+  Worker
+    runner Runner
+```
+
+- File responsibility, or a broad refactor, as a shallow file tree:
+
+```text
+internal/
+├── scheduler/     # assigns jobs to workers
+├── worker/        # owns worker state and lifecycle
+└── transport/     # sends and receives over the wire
+```
+
+- Component interaction, control flow, or data flow, with Mermaid:
+
+```mermaid
+sequenceDiagram
+    participant CLI
+    participant Scheduler
+    participant Worker
+    CLI->>Scheduler: submit job
+    Scheduler->>Worker: dispatch
+    Worker-->>Scheduler: stream result
+```
+
+- Use `diff` when the point is what changed and the surrounding shape already exists. Match the diff shape to what you're showing.
+
+For a type's shape:
+
+```diff
+ Scheduler (internal/scheduler/scheduler.go)
+   Store interface
+   jobs chan Job
++  retries int
+   Worker
+     runner Runner
+```
+
+For a file layout:
+
+```diff
+ internal/
+ ├── scheduler/
++│   └── retry.go       # backoff and retry policy
+ ├── worker/
+-└── transport.go
++└── transport/
++    ├── client.go
++    └── stream.go
+```
+
+For a call tree:
+
+```diff
+ Submit
+   CreateSession
+     persistPrompt
++    validateJob
+   StartWorker
+-    Runner.Run
++    Runner.Run
++      subscribeToEvents
+```
+
+For control flow:
+
+```diff
+ on(save)
+-  write content
++  if content is unchanged
++    return cached result
++  write new content
++  invalidate cache
+```
+
+- Show the whole block when most of it is new, when omitted context would hide ownership or order, or the reader needs a copyable shape:
+
+```go
+func expandRetry(job Job) time.Duration {
+    backoff := job.Attempts * baseDelay
+    return min(backoff, maxDelay)
+}
+```
+
+- For a comparison or a shape too dense for Mermaid (an architecture sketch, a before/after state diagram, a benchmark), write one focused HTML file matched to the point, and open it for the user:
+
+```
+Bash(open path/to/visual-{description}.html)
+```
+
+Place each visual next to the short text it supports. Keep only the calls, files, fields, and boundaries needed to answer the question at hand.
 
 ## State store
 
