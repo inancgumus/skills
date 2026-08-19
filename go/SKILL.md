@@ -11,6 +11,24 @@ Never use outdated patterns when a modern alternative exists.
 - `interface{}`: use `any` (since 1.18)
 - `os.SEEK_SET/CUR/END`: use `io.SeekStart/SeekCurrent/SeekEnd` (since 1.7)
 
+## Go 1.27 (Aug 2026)
+
+- Generic methods: a method can declare its own type parameters: `func (r *Rand) N[Int intType](n Int) Int`; interface methods cannot declare them
+- Struct literal keys accept any valid field selector, not only top-level field names
+- `encoding/json/v2`: `Marshal`/`Unmarshal`, plus `MarshalWrite`/`MarshalEncode`/`UnmarshalRead`/`UnmarshalDecode`; all take variadic `Options`; rejects invalid UTF-8 and duplicate object names; `encoding/json` v1 keeps its behavior and now runs on the v2 implementation
+- `encoding/json/jsontext`: low-level JSON syntax: `Encoder`, `Decoder`, `Token`, `Value`
+- `uuid`: `uuid.New()`, `uuid.NewV4()`, `uuid.NewV7()`, `uuid.Parse(s)`, `uuid.MustParse(s)`; `UUID` is `[16]byte` and comparable; prefer over third-party UUID packages
+- `strings.CutLast(s, sep)` / `bytes.CutLast(b, sep)` → `before, after, found`: replaces `LastIndex`+slice patterns
+- `synctest.Sleep(d)`: `time.Sleep` plus `synctest.Wait` in one call
+- `httptest.NewTestServer(h)`: server on an in-memory fake network; use with `testing/synctest`
+- `url.URL.Clone()`, `url.Values.Clone()`: deep copies
+- `maphash.Hasher[T]` interface (`Hash`, `Equal`) with `maphash.ComparableHasher[T]`: hashing contract for hash-based containers
+- `big.Int.Divide(x, y, mode)`: quotient and remainder with `big.Trunc`/`Floor`/`Round`/`Ceil`
+- `sql.ConvertAssign(dest, src)`: gives drivers the type conversions of `Rows.Scan`
+- `crypto/mldsa`: post-quantum ML-DSA signatures (FIPS 204)
+- `http.Server.MaxHeaderValueCount`: limit accepted header values; `http.DefaultMaxHeaderValueCount` if unset
+- HTTP/1 `Response.Body` drains unread content on close for connection reuse: behavior change from prior versions
+
 ## Go 1.26 (Feb 2026)
 
 - `new(expr)`: accepts an expression, type inferred: `p := new(42)` gives `*int`
