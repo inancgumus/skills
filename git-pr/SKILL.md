@@ -9,7 +9,9 @@ Write PR descriptions like an experienced engineer talking to another engineer.
 
 Write like a human, not like a robot.
 
-Be extremely concise. Cut every sentence that doesn't help the reviewer. Empty sections should be omitted, not padded. But match the description to the scope of the work. A big change deserves a description that reflects it. Look at what changed to understand the scope, but never put diffstat numbers, line counts, or file counts in the description.
+Two sentences. One for What, one for Why. That is the whole description, whatever the size of the diff.
+
+A big change does NOT earn a longer description. A migration across forty files still gets one sentence for what it does and one for why. The diff carries the detail; the description carries the decision the reviewer has to make. Never put diffstat numbers, line counts, or file counts anywhere in it.
 
 ## Workflow
 
@@ -46,68 +48,72 @@ If the title contains a single quote, write it to a file too or use `$'...'` ANS
 
 ## Structure
 
-Use only what helps the reviewer. Include only sections that add value.
-
-**Never copy the example sentences. Read it to absorb the tone and structure, then write original text based on the actual changes.**
+Three sections, in this order, and nothing else:
 
 ````markdown
 ## What?
 
-<Standalone summary sentence. What the PR does in plain terms.>
+<One sentence. The outcome.>
 
 ## Why?
 
-<Broad impact first. How does this improve things for the user?>
-
-<Optional narrowing. The specific symptom or trigger that made this visible.>
-
-## Note
-
-<Optional. Dependencies, migration steps, or anything reviewers need to know upfront.>
+<One sentence. The reason.>
 
 ## Related PR(s)/Issue(s)
 
-Depends on #NNN
-Closes #NNN
+- #NNN
+- org/repo#NNN
 ````
+
+Omit `Related` when there is nothing to link. Never add a section that is not on this list: no `Note`, no `Out of scope`, no `How to reproduce`, no `Notes`, no `Benchmarks`, no evidence table, no plan or command output, no diagram.
+
+**Never copy the example sentences. Read them to absorb the tone, then write original text from the actual change.**
 
 ### `What` section
 
-- Start with a single standalone sentence that says what the PR does in plain terms. This first sentence should work on its own as a summary. It should describe the impact or outcome, not the implementation mechanism.
-- The first sentence is the most important line in the PR. Get it right before writing anything else. If it reads like a code comment ("defers X until after Y", "moves the read to after Z"), you're describing mechanism, not impact. Zoom out.
-- If the summary names a package, function, or internal component, you're at the wrong level. Describe what the consumer or user gets, not what the code does internally.
-- Never include technical references like function names, package names, method names, or API calls.
-- If the summary covers the impact, stop.
-- For larger PRs, follow the summary with a bullet list of concrete changes. Each bullet should describe a user-visible behavior, not an implementation detail.
-- Write like you're telling a colleague what you worked on, not writing a report.
-- Do NOT name specific functions, packages, mutexes, or helpers. Ever.
-- Do NOT mix in "why" (the reason, the bug, the symptoms). Keep that in the Why section.
+One sentence. It names the outcome, not the mechanism.
+
+- Write what the reader gets, not what the code does. If the sentence would fit as a code comment, it is at the wrong level.
+- Never name a function, package, type, file, field, or API call.
+- Do not put the reason here. That is `Why`.
+- No bullet list, however large the PR.
+
+Good: `Aligns the branch protection of the classic repos with other k6-core repos.`
+Bad: `Declares each classic branch protection rule in Terraform with an import block so a follow-up can delete it.`
 
 ### `Why` section
 
-- Be scenario-driven. Paint the situation: what the user does, what happens, why it's bad. "When a test uses X, the agent does Y. That takes minutes. While it runs, every other Z waits." The reader should understand the problem without knowing any code.
-- Zero technical implementation details. No locks, mutexes, goroutines, channels, counters, map writes, signal names, error codes. If you could only explain it to a product manager, that's the right level. The diff shows the how.
-- Explain the intended behavior before the problem. Don't open with what's broken. First say what the change enables, then why it's currently not working. The reviewer needs a mental model before the problem statement lands.
-- Lead with the broad impact: how does this improve things for the end user? Not the codebase, not the team, the person using this. Ask yourself: who benefits and how?
-- For larger PRs, follow the summary with a bullet list of specific gains. Use the "X without Y" form ("stays fresh without rebuilding") instead of the "X. No Y. No Z." form.
-- Then, optionally, narrow to the specific symptom or trigger that made this visible. This grounds the broad impact in something concrete. ("Before this, X happened because Y.")
-- Let the Why flow as one narrative when context, problem, and impact are closely connected. One paragraph that builds naturally reads better than three choppy ones. Don't fragment into separate paragraphs for the sake of "scannability."
-- Use parenthetical examples for simple cases: "(e.g., a user on 2.0 gets 2.2 docs)" keeps flow. Save full-sentence examples for complex scenarios that need setup.
-- Cover both directions of impact. When something drifts, say what's extra AND what's missing. Don't describe only one side.
-- One sentence is enough for secondary impact. If the primary problem is clear, secondary effects don't need a dramatic paragraph. Don't spiral into storytelling.
-- Group related things naturally. "Like X, Y is also..." instead of describing each separately when they share the same role.
-- Do NOT start with the specific symptom. Start broad, then narrow.
-- Do NOT badmouth the old approach. Sell the new one.
-- Do NOT pad with obvious statements ("navigation is fundamental"). If everyone knows it, don't say it.
-- Do NOT repeat the mechanism or root cause already covered in What.
-- Do NOT use marketing slogans as summaries ("Smaller, faster, fresher", "at scale").
-- Stay behavioral. Describe what the user experiences, not how the code works. Internal mechanisms belong in code, not PR descriptions.
-- If you catch yourself writing implementation details (lock names, data structures, concurrency primitives), delete the sentence and describe the observable effect instead.
+One sentence. It names the reason or the gain.
 
-### Separation rule
+- Say who is better off and how. `Enables Renovate to auto-merge on these classic repos.`
+- Do not restate the What in other words.
+- Do not describe the mechanism, the investigation, the symptom hunt, the error message, or the earlier attempts.
+- Do not describe what the PR does NOT do.
+- No bullet list, however large the PR.
 
-- `What` = problem solved + behavior change.
-- `Why` = why now / what prompted this.
+Good: `Fixes an incorrect workflow reference.`
+Bad: `The hourly approval run fails at the token step and has never approved anything, because the app configuration names a workflow that does not run, so no matching Vault role exists.`
+
+### The description is not a scratch pad
+
+It stands on its own. A reviewer opening it cold, months later, with no access to the session that produced it, must get the whole point from two sentences.
+
+So none of this goes in:
+
+- What the session discussed, tried, measured, or ruled out.
+- Earlier attempts, abandoned approaches, or a closed PR that came before.
+- What a previous PR did, unless a live dependency makes the reviewer act differently.
+- What the PR does NOT do, does not change, or leaves untouched.
+- Follow-up work, unless a reviewer must not apply this one without it.
+- Root cause chains, error output, plan output, commands run, or how you proved it.
+
+Every one of those is real and was worth finding. They belong in the commit message, an issue, or a knowledge base. The reviewer needs the decision, not the journey to it.
+
+### The cut test
+
+Draft the two sentences first, then stop. Before posting, read each remaining sentence and ask whether it changes what the reviewer decides. If it does not, delete it.
+
+Extreme conciseness is not vagueness. Cut sentences, never meaning. `Fixes an incorrect workflow reference.` is short and exact. `Fixes some config issues.` is short and says nothing. If cutting a sentence loses a fact the reviewer needs, the sentence you should have cut is a different one.
 
 ## PR Titles
 
@@ -142,12 +148,10 @@ Closes #NNN
 4. Keep language direct, plain, and specific.
 5. No code-like terms in the description. No backticks except for issue references.
 6. Format issue references as plain `#1234`.
-7. Include only sections that help reviewers.
-8. Keep paragraphs short and scannable.
+7. Use only the three sections above.
+8. One sentence per section. No bullet lists.
 9. Avoid template-style phrasing and rhetorical contrast.
-10. Only add a Mermaid diagram when the interaction is genuinely hard to explain in
-    words (e.g., multi-party protocols, complex state machines). If two sentences
-    can explain it, skip the diagram.
+10. No Mermaid diagram. Two sentences replace it.
 11. Do NOT hard-wrap paragraphs: GitHub renders a single newline in a PR/issue body as a `<br>`, so keep each paragraph on one physical line (blank lines still separate paragraphs) and let it soft-wrap into a block; verify the raw body with `gh pr view <n> --json body -q .body | cat -A`.
 
 ## Tone
@@ -172,8 +176,7 @@ On a public repo the title, body, branch name, commit message, and references ar
   in the description. Those belong in the diff, not the PR summary.
 - Do NOT over-explain the mechanism. If the What section already says what changed,
   the Why section should not restate it in different words.
-- Do NOT pad with extra sentences. Use only as many as the change needs.
-- Do NOT default to adding Mermaid diagrams. Most PRs don't need them.
+- Do NOT pad with extra sentences. Two sentences, whatever the size of the change.
 - Write like you're telling a teammate what you did over chat, not writing a report.
 - Do NOT use em dashes (—) as connectors. "X — Y" is an AI writing pattern. Use
   periods, commas, or restructure the sentence instead. If you catch yourself joining
@@ -200,9 +203,9 @@ On a public repo the title, body, branch name, commit message, and references ar
 
 ## Examples
 
-Study these real examples to absorb the tone, scale, and structure. Small PRs get minimal descriptions. Bigger ones earn more detail, but only when it helps the reviewer.
+Every one of these is two sentences, from a one-line config change up to a whole subsystem replacement. The shape never changes.
 
-### Small: one-liner PRs
+### Config move
 
 **Title:** `config: move validation out of experimental`
 ```markdown
@@ -212,155 +215,129 @@ Moves config validation into the stable package.
 
 ## Why?
 
-Keeps the canonical source in the stable module location rather than leaving it behind.
-
-## Related
-
-Follow-up to #312
-```
-
-**Title:** `cli: add `--format` to help output`
-```markdown
-## What?
-
-Makes `--format` discoverable by adding it to the help output.
-
-## Why?
-
-Users don't know the flag exists unless they read the docs. The help output should surface it.
+Keeps the canonical source in the stable module location.
 
 ## Related PR(s)/Issue(s)
 
-Closes #455
+- #312
 ```
 
-### Small: bug fix, scenario-driven Why
+### Flag made discoverable
 
-**Title:** `worker: unblock concurrent job creation`
+**Title:** `cli: add \`--format\` to help output`
 ```markdown
 ## What?
 
-Concurrent job creation no longer blocks behind a slow download on the same node.
+Makes `--format` discoverable in the help output.
 
 ## Why?
 
-When a job uses a custom binary (e.g., with plugins), the worker downloads it during setup. That download can take minutes. While it runs, every other job on the same node waits, even though the downloads are independent.
-```
-
-The Why paints the scenario in plain terms. No mention of locks, mutexes, or concurrency primitives. The reader understands when it happens (custom binary download), what goes wrong (other jobs wait), and why it matters (independent work is serialized).
-
-**Title:** `websockets: fix shutdown deadlock on server pings`
-```markdown
-## What?
-
-Fixes a deadlock where WebSocket connections hang forever during teardown when the server sends pings.
-
-## Why?
-
-WebSocket connections should shut down cleanly when a test ends or the server drops the connection. A server ping arriving during that window could permanently stall the process.
-
-## How to reproduce
-
-The included test sends 20 pings in a burst and drops the TCP connection. Without the fix, the test hangs until timeout.
+Users cannot find the flag without reading the docs.
 
 ## Related PR(s)/Issue(s)
 
-Closes #198
+- #455
 ```
 
-### Small: bug fix with user-visible impact
+### Better error message
 
 **Title:** `api: return accurate error on empty name lookup`
 ```markdown
 ## What?
 
-The user sees "not found" instead of "an error occurred communicating with the server" when the query returns no results.
+Shows "not found" instead of a communication error when a lookup returns nothing.
 
 ## Why?
 
-The API responded correctly, but the resource wasn't there. The old message pointed users toward network issues when nothing was wrong with communication.
+The old message sent users hunting for network problems that were not there.
 ```
 
-### Medium: new feature with code examples
+### Concurrency fix
 
-**Title:** `cli: shell completions for plugin subcommands`
+**Title:** `worker: unblock concurrent job creation`
 ```markdown
 ## What?
 
-Shell completions now work for auto-provisioned plugin subcommands.
-
-\`\`\`bash
-$ mycli plugin docs <TAB>     # provisions and delegates completion
-$ mycli plugin docs <TAB>     # cached, returns topic completions
-http  grpc  websockets  mqtt
-$ mycli plugin docs http <TAB>
-get  post  head  options  del  patch  request
-\`\`\`
+Lets jobs start while another job on the same node downloads its binary.
 
 ## Why?
 
-Tab completion silently returns nothing for plugins that aren't compiled into the binary. Users who rely on auto-provisioning get no completions even though the plugin supports them when bundled.
-
-## Notes
-
-- Partial names and registered plugins are unaffected. Cobra handles those natively.
+One slow download held up every other job on that node.
 ```
 
-### Medium: behavior change with before/after
+### Deadlock fix
 
-**Title:** `` `console.log`: Deep object logging ``
+**Title:** `websockets: fix shutdown deadlock on server pings`
 ```markdown
 ## What?
 
-Console logging now properly traverses and displays complex JavaScript structures:
-
-\`\`\`js
-console.log({ one: class {}, two: function() { } });
-// Before: {}
-// After:  {"one":"[object Function]","two":"[object Function]"}
-\`\`\`
+Shuts WebSocket connections down cleanly when the server sends pings during teardown.
 
 ## Why?
 
-Nested properties like functions and classes were silently dropped or marshaled to `{}`, making debugging painful.
+A ping arriving in that window stalled the process until timeout.
+
+## Related PR(s)/Issue(s)
+
+- #198
 ```
 
-### Large: architecture change with summary + detail lists
+### Infrastructure alignment
+
+**Title:** `Import k6-core legacy branch protection rules`
+```markdown
+## What?
+
+Aligns the branch protection of the classic repos with other k6-core repos.
+
+## Why?
+
+Enables Renovate to auto-merge on these classic repos.
+
+## Related PR(s)/Issue(s)
+
+- grafana/k6-pilot#86
+```
+
+### One-line config fix
+
+**Title:** `Fix k6-ci auto-approve workflow registration`
+```markdown
+## What?
+
+Renovate pull requests get approved on `k6-ci` again, so they can merge on their own.
+
+## Why?
+
+Fixes an incorrect workflow reference.
+
+## Related PR(s)/Issue(s)
+
+- grafana/k6-pilot#86
+```
+
+### Whole-subsystem replacement
+
+Forty files, a deleted package, a new loading model. Still two sentences.
 
 **Title:** `docs: always-current documentation, smaller binary`
 ```markdown
 ## What?
 
-Adds on-demand documentation loading with auto-refresh and preloading.
-
-- Switches to a shared doc infrastructure without changing inputs and outputs.
-- Lazy-loads documentation files on demand, with multi-version support.
-- Automatically refreshes docs when they change (ETag support).
-- Adds a `-preload` flag to download all versions at startup.
+Loads documentation on demand and refreshes it when it changes, instead of embedding every version in the binary.
 
 ## Why?
 
-Stale docs mean wrong code suggestions, outdated API usage, missing features.
+Stale docs produce wrong code suggestions.
 
-- Docs stay fresh without rebuilding or redeploying.
-- Smaller binary without the 5MB embed across 19 versions.
-- Loads only the requested version instead of all 16K sections at startup.
-- `-preload` downloads all versions at startup without embedding them.
-- Deletes `internal/sections/` and the doc preparation pipeline.
-- No new tradeoffs. The old approach downloaded at build time too.
+## Related PR(s)/Issue(s)
 
-## Note
-
-The new infra uses a filesystem abstraction. Docs can still be embedded at build time, then refreshed at runtime. `-preload` achieves the same benefit more simply (~5s) and leaves the decision to users.
+- #418
 ```
-
-The What summary describes the capability (on-demand loading, auto-refresh, preloading), not the implementation ("switches to shared package", "calls NewCatalog()"). Each bullet is a user-visible behavior. The Why summary names the end-user impact before listing specific gains. Gains use "X without Y" form. The old approach is mentioned once to show there are no new tradeoffs, not to badmouth it.
-
 
 ### Key patterns
 
-- **Scale to the PR.** A small change needs a sentence. A big migration needs a description that reflects the scope. But never put stats in the description.
-- **Show, don't explain.** A code example or before/after table beats paragraphs of prose.
-- **Tables for comparisons.** When comparing old vs new behavior across multiple cases, use a table.
-- **Don't undersell.** If the change removes a whole subsystem, introduces a new architecture, or touches many areas, the description should convey that. Concise doesn't mean short when the work is large.
-- **Extra sections only when needed.** Notes, benchmarks, design diagrams are for big PRs where reviewers genuinely need the context.
+- **Size never changes the shape.** A migration touching forty files gets the same two sentences as a typo fix. Reviewers read the diff for scope.
+- **Outcome in What, reason in Why.** If both sentences say the same thing twice, the Why is wrong.
+- **Cut, do not compress.** Do not squeeze three facts into one long sentence. Pick the one fact the reviewer needs and drop the rest.
+- **The investigation goes elsewhere.** Root cause, error output, plans, comparisons, and rejected approaches belong in the commit message, an issue, or a knowledge base.
