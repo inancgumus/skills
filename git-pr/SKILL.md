@@ -11,7 +11,9 @@ Write like a human, not like a robot.
 
 Most PRs are one sentence for What and one for Why. Start there every time.
 
-A complex PR may earn a second paragraph, but only when that paragraph makes the purpose clearer to a reader who does not know the code. Size of the diff is not the test. Purpose is. A migration across forty files with an obvious purpose stays at two sentences, and a three-line change with a purpose nobody would guess may need a paragraph.
+A complex PR may earn more: another paragraph, a short list, a small table, a subheading, a bold phrase. Add as much as the complexity needs and not one line more. The only test is whether it makes the purpose clearer to a reader who does not know the code.
+
+Size of the diff is not the test. Purpose is. A migration across forty files with an obvious purpose stays at two sentences, and a three-line change with a purpose nobody would guess may need a paragraph and a table.
 
 Never put diffstat numbers, line counts, file counts, or benchmark figures in it. A reader cannot act on a number they cannot check.
 
@@ -61,7 +63,7 @@ Three sections, in this order, and nothing else:
 
 <One sentence. The reason.>
 
-<Optional second paragraph, only when the purpose is not obvious from the sentence above.>
+<Optional. More paragraphs, a list, or a small table, only when the purpose is not obvious from the sentence above.>
 
 ## Related PR(s)/Issue(s)
 
@@ -69,9 +71,13 @@ Three sections, in this order, and nothing else:
 - org/repo#NNN
 ````
 
-Omit `Related` when there is nothing to link. Never add a section that is not on this list: no `Note`, no `Out of scope`, no `How to reproduce`, no `Notes`, no `Benchmarks`, no evidence table, no plan or command output, no diagram.
+Omit `Related` when there is nothing to link. Never add a top-level section that is not on this list: no `Note`, no `Out of scope`, no `How to reproduce`, no `Notes`, no `Benchmarks`. Never paste plan output, command output, or logs.
 
-The optional paragraph earns its place only if a reader would otherwise ask "why would anyone want that?". It never explains how the code works.
+A subheading inside `Why` is fine when the extra material needs one.
+
+Everything after the two sentences earns its place only if a reader would otherwise ask "why would anyone want that?". It never explains how the code works.
+
+Use markdown to make that material quicker to read, in good measure: a list when there are three or more parallel items, a table when two things differ across the same columns, bold on the phrase that carries the decision. Not bold on every other word, not a heading over two lines, not a table with one row.
 
 **Never copy the example sentences. Read them to absorb the tone, then write original text from the actual change.**
 
@@ -95,14 +101,14 @@ One sentence. It names the reason or the gain.
 - Do not restate the What in other words.
 - Do not describe the mechanism, the investigation, the symptom hunt, the error message, or the earlier attempts.
 - Do not describe what the PR does NOT do.
-- One sentence, plus a second paragraph only when the purpose needs it.
+- One sentence, plus more only when the purpose needs it.
 
 Good: `Fixes an incorrect workflow reference.`
 Bad: `The hourly approval run fails at the token step and has never approved anything, because the app configuration names a workflow that does not run, so no matching Vault role exists.`
 
 ### The description is not a scratch pad
 
-It stands on its own. A reviewer opening it cold, months later, with no access to the session that produced it, must get the whole point from two sentences.
+It stands on its own. A reviewer opening it cold, months later, with no access to the session that produced it, must get the whole point from what is written there.
 
 So none of this goes in:
 
@@ -117,7 +123,7 @@ Every one of those is real and was worth finding. They belong in the commit mess
 
 ### The cut test
 
-Draft the two sentences first, then stop. Before posting, read each remaining sentence and ask whether it changes what the reviewer decides. If it does not, delete it.
+Draft the two sentences first, then stop. Read them back and ask whether the purpose is already clear. If it is, post them. If it is not, add the least that makes it clear, then read every line again and ask whether it changes what the reviewer decides. Delete what does not.
 
 Extreme conciseness is not vagueness. Cut sentences, never meaning. `Fixes an incorrect workflow reference.` is short and exact. `Fixes some config issues.` is short and says nothing. If cutting a sentence loses a fact the reviewer needs, the sentence you should have cut is a different one.
 
@@ -155,9 +161,9 @@ Extreme conciseness is not vagueness. Cut sentences, never meaning. `Fixes an in
 5. No code-like terms in the description. No backticks except for issue references.
 6. Format issue references as plain `#1234`.
 7. Use only the three sections above.
-8. One sentence per section. No bullet lists.
+8. One sentence per section by default. Lists and tables only when they make the purpose clearer.
 9. Avoid template-style phrasing and rhetorical contrast.
-10. No Mermaid diagram. Two sentences replace it.
+10. No Mermaid diagram unless the flow is genuinely unreadable in words. Prose or a small table almost always wins.
 11. Do NOT hard-wrap paragraphs: GitHub renders a single newline in a PR/issue body as a `<br>`, so keep each paragraph on one physical line (blank lines still separate paragraphs) and let it soft-wrap into a block; verify the raw body with `gh pr view <n> --json body -q .body | cat -A`.
 
 ## Tone
@@ -182,7 +188,7 @@ On a public repo the title, body, branch name, commit message, and references ar
   in the description. Those belong in the diff, not the PR summary.
 - Do NOT over-explain the mechanism. If the What section already says what changed,
   the Why section should not restate it in different words.
-- Do NOT pad with extra sentences. One per section, and a second paragraph only when the purpose needs it.
+- Do NOT pad. One sentence per section, and more only when the purpose needs it.
 - Write like you're telling a teammate what you did over chat, not writing a report.
 - Do NOT use em dashes (—) as connectors. "X — Y" is an AI writing pattern. Use
   periods, commas, or restructure the sentence instead. If you catch yourself joining
@@ -210,7 +216,7 @@ On a public repo the title, body, branch name, commit message, and references ar
 
 ## Examples
 
-Every one of these is two sentences, from a one-line config change up to a whole subsystem replacement. The shape never changes.
+The first seven are two sentences, from a one-line config change up to a whole subsystem replacement. The last two show what a purpose that needs explaining looks like.
 
 ### Config move
 
@@ -342,7 +348,7 @@ Stale docs produce wrong code suggestions.
 - #418
 ```
 
-### When a paragraph earns its place
+### When more than two sentences earns its place
 
 The purpose here is not guessable from the change, so one paragraph explains it and stops.
 
@@ -363,9 +369,36 @@ The gate was there to let a bad release get yanked before it reached us. Renovat
 - grafana/k6-pilot#86
 ```
 
+### When a table earns its place
+
+Four behaviours change at once and each has a before and an after. A table shows that faster than four sentences, and nothing else is added.
+
+**Title:** `cli: consistent exit codes`
+```markdown
+## What?
+
+Gives scripts a reliable exit code for every failure kind.
+
+## Why?
+
+Every failure returned `1`, so a wrapper script could not tell a bad flag from a failed run.
+
+| Failure | Before | After |
+| --- | --- | --- |
+| Bad flag | 1 | 2 |
+| Config not found | 1 | 3 |
+| Run failed | 1 | 4 |
+| Interrupted | 1 | 130 |
+
+## Related PR(s)/Issue(s)
+
+- #501
+```
+
 ### Key patterns
 
-- **Purpose sets the length, not size.** A forty-file migration with an obvious purpose gets two sentences. A three-line change nobody would guess the point of may earn a paragraph.
+- **Purpose sets the length, not size.** A forty-file migration with an obvious purpose gets two sentences. A three-line change nobody would guess the point of may earn a paragraph and a table.
+- **Formatting is for reading speed, not decoration.** A list for three or more parallel items, a table when things differ across the same columns, bold on the phrase that carries the decision. In good measure. Bold everywhere reads as bold nowhere.
 - **Outcome in What, reason in Why.** If both sentences say the same thing twice, the Why is wrong.
 - **Cut, do not compress.** Do not squeeze three facts into one long sentence. Pick the one fact the reviewer needs and drop the rest.
 - **The investigation goes elsewhere.** Root cause, error output, plans, comparisons, and rejected approaches belong in the commit message, an issue, or a knowledge base.
