@@ -9,9 +9,11 @@ Write PR descriptions like an experienced engineer talking to another engineer.
 
 Write like a human, not like a robot.
 
-Two sentences. One for What, one for Why. That is the whole description, whatever the size of the diff.
+Most PRs are one sentence for What and one for Why. Start there every time.
 
-A big change does NOT earn a longer description. A migration across forty files still gets one sentence for what it does and one for why. The diff carries the detail; the description carries the decision the reviewer has to make. Never put diffstat numbers, line counts, or file counts anywhere in it.
+A complex PR may earn a second paragraph, but only when that paragraph makes the purpose clearer to a reader who does not know the code. Size of the diff is not the test. Purpose is. A migration across forty files with an obvious purpose stays at two sentences, and a three-line change with a purpose nobody would guess may need a paragraph.
+
+Never put diffstat numbers, line counts, file counts, or benchmark figures in it. A reader cannot act on a number they cannot check.
 
 ## Workflow
 
@@ -59,6 +61,8 @@ Three sections, in this order, and nothing else:
 
 <One sentence. The reason.>
 
+<Optional second paragraph, only when the purpose is not obvious from the sentence above.>
+
 ## Related PR(s)/Issue(s)
 
 - #NNN
@@ -67,6 +71,8 @@ Three sections, in this order, and nothing else:
 
 Omit `Related` when there is nothing to link. Never add a section that is not on this list: no `Note`, no `Out of scope`, no `How to reproduce`, no `Notes`, no `Benchmarks`, no evidence table, no plan or command output, no diagram.
 
+The optional paragraph earns its place only if a reader would otherwise ask "why would anyone want that?". It never explains how the code works.
+
 **Never copy the example sentences. Read them to absorb the tone, then write original text from the actual change.**
 
 ### `What` section
@@ -74,9 +80,9 @@ Omit `Related` when there is nothing to link. Never add a section that is not on
 One sentence. It names the outcome, not the mechanism.
 
 - Write what the reader gets, not what the code does. If the sentence would fit as a code comment, it is at the wrong level.
-- Never name a function, package, type, file, field, or API call.
+- Never name a function, package, type, file path, field, flag, line number, or API call. A reader cannot use a name they cannot open, and it pushes the sentence down to code level.
 - Do not put the reason here. That is `Why`.
-- No bullet list, however large the PR.
+- One sentence. If you cannot say the outcome in one, the outcome is not yet clear to you.
 
 Good: `Aligns the branch protection of the classic repos with other k6-core repos.`
 Bad: `Declares each classic branch protection rule in Terraform with an import block so a follow-up can delete it.`
@@ -89,7 +95,7 @@ One sentence. It names the reason or the gain.
 - Do not restate the What in other words.
 - Do not describe the mechanism, the investigation, the symptom hunt, the error message, or the earlier attempts.
 - Do not describe what the PR does NOT do.
-- No bullet list, however large the PR.
+- One sentence, plus a second paragraph only when the purpose needs it.
 
 Good: `Fixes an incorrect workflow reference.`
 Bad: `The hourly approval run fails at the token step and has never approved anything, because the app configuration names a workflow that does not run, so no matching Vault role exists.`
@@ -176,7 +182,7 @@ On a public repo the title, body, branch name, commit message, and references ar
   in the description. Those belong in the diff, not the PR summary.
 - Do NOT over-explain the mechanism. If the What section already says what changed,
   the Why section should not restate it in different words.
-- Do NOT pad with extra sentences. Two sentences, whatever the size of the change.
+- Do NOT pad with extra sentences. One per section, and a second paragraph only when the purpose needs it.
 - Write like you're telling a teammate what you did over chat, not writing a report.
 - Do NOT use em dashes (—) as connectors. "X — Y" is an AI writing pattern. Use
   periods, commas, or restructure the sentence instead. If you catch yourself joining
@@ -193,7 +199,8 @@ On a public repo the title, body, branch name, commit message, and references ar
 
 ## Backticks and References
 
-- Use backticks on filenames, commands, branch names, and technical identifiers.
+- A description names almost nothing. No file paths, no symbols, no line numbers. Backticks are for the few names a reader would actually type or open: a repo, a released version, a user-facing flag or command. The rest belongs in the diff.
+- When a name does belong, put it in backticks.
 - When referencing a repo at a branch or version, use the `repo@ref` form: `foo@master`, `foo@v2`. Not "foo master" or "foo v2".
 - When referencing a specific commit, link it: [`foo@abc123`](https://github.com/org/foo/commit/abc123). Don't say "the previous hash" or "the old commit" without identifying it.
 - Cross-repo PR/issue references must include the org/repo prefix: org/repo#123. Bare #NNN only works for the current repo. Don't backtick issue/PR references or GitHub won't auto-link them.
@@ -318,7 +325,7 @@ Fixes an incorrect workflow reference.
 
 ### Whole-subsystem replacement
 
-Forty files, a deleted package, a new loading model. Still two sentences.
+Forty files, a deleted package, a new loading model. The purpose is plain, so two sentences carry it.
 
 **Title:** `docs: always-current documentation, smaller binary`
 ```markdown
@@ -335,9 +342,30 @@ Stale docs produce wrong code suggestions.
 - #418
 ```
 
+### When a paragraph earns its place
+
+The purpose here is not guessable from the change, so one paragraph explains it and stops.
+
+**Title:** `renovate: drop the 7-day release age gate`
+```markdown
+## What?
+
+Lets dependency updates merge as soon as they are green.
+
+## Why?
+
+Security patches waited a week before anyone could merge them.
+
+The gate was there to let a bad release get yanked before it reached us. Renovate now holds a PR until every check passes, which covers the same risk without the wait.
+
+## Related PR(s)/Issue(s)
+
+- grafana/k6-pilot#86
+```
+
 ### Key patterns
 
-- **Size never changes the shape.** A migration touching forty files gets the same two sentences as a typo fix. Reviewers read the diff for scope.
+- **Purpose sets the length, not size.** A forty-file migration with an obvious purpose gets two sentences. A three-line change nobody would guess the point of may earn a paragraph.
 - **Outcome in What, reason in Why.** If both sentences say the same thing twice, the Why is wrong.
 - **Cut, do not compress.** Do not squeeze three facts into one long sentence. Pick the one fact the reviewer needs and drop the rest.
 - **The investigation goes elsewhere.** Root cause, error output, plans, comparisons, and rejected approaches belong in the commit message, an issue, or a knowledge base.
