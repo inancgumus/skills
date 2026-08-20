@@ -1,54 +1,392 @@
 #!/usr/bin/env python3
-"""Remove state-store directories whose PR is merged or closed.
+"""Remove every leftover of a review whose PR is merged or closed.
 
 Usage:
-  cleanup_state.py            # list what would go
-  cleanup_state.py --delete   # remove them
+  cleanup_state.py                       # list what would go
+  cleanup_state.py --delete              # remove it
+  cleanup_state.py --repo-path ~/src/k6  # sweep this clone too
+  cleanup_state.py --scratch-root /tmp   # sweep this scratch root too
+  cleanup_state.py --pr 6257             # limit to one PR number
 
-Reads every <owner>-<repo>-<pr> directory under the state store, asks GitHub
-for the PR state, and drops the ones that are no longer OPEN. Prints one line
-per directory, and the ones it could not resolve.
+A review litters in four places: the state-store directory, the throwaway
+worktrees (`pr-<pr>`, `pr-<pr>-<agent>`), the `pr-<pr>` branch, and whatever
+the subagents dropped beside their worktrees (built binaries, probe scripts,
+patches). This sweeps all four for every PR that is no longer OPEN.
+
+Clones are discovered from the worktrees themselves, so a bare run usually
+finds everything. An OPEN PR is never touched, and neither is anything whose
+state gh cannot read.
 """
+import json
+import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-import os
+
+# Only ever consider the names a review itself creates: pr-<number>, and
+# pr-<number> with an agent suffix. Anything else stays.
+PR_NAME = re.compile(r"^pr-(\d+)(?:[-._].*)?$", re.ASCII)
+
+ORDER = {
+    "worktree": 0,
+    "orphan worktree": 1,
+    "orphan dir": 2,
+    "loose file": 3,
+    "state dir": 4,
+    "branch": 5,  # after its worktrees, or git refuses to drop a checked-out branch
+}
+
+_states = {}
+
+
+def run(args, cwd=None):
+    return subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+
+
+def git(args, cwd):
+    return run(["git", *args], cwd=cwd)
 
 
 def pr_state(repo, pr):
-    out = subprocess.run(
-        ["gh", "pr", "view", pr, "-R", repo, "--json", "state", "-q", ".state"],
-        capture_output=True,
-    )
-    if out.returncode != 0:
+    """OPEN, MERGED, CLOSED, or None when gh cannot read it."""
+    key = (repo, pr)
+    if key not in _states:
+        out = run(["gh", "pr", "view", str(pr), "-R", repo, "--json", "state", "-q", ".state"])
+        _states[key] = out.stdout.strip() if out.returncode == 0 else None
+    return _states[key]
+
+
+def repo_slug(clone):
+    """owner/repo from the clone's origin remote, without touching the network."""
+    url = git(["remote", "get-url", "origin"], clone).stdout.strip()
+    if not url:
         return None
-    return out.stdout.decode().strip()
+    parts = [p for p in re.split(r"[/:]", re.sub(r"\.git$", "", url)) if p]
+    return "/".join(parts[-2:]) if len(parts) >= 2 else None
+
+
+def clone_of(path):
+    """The clone behind a worktree directory, whether it is still registered."""
+    dotgit = Path(path) / ".git"
+    if not dotgit.is_file():
+        return None  # a directory with .git/ is a clone, not a worktree
+    m = re.match(r"gitdir:\s*(.+)", dotgit.read_text().strip())
+    if not m:
+        return None
+    gitdir = Path(m.group(1))
+    if "worktrees" not in gitdir.parts:
+        return None
+    # <clone>/.git/worktrees/<name> -> <clone>
+    return Path(*gitdir.parts[: gitdir.parts.index("worktrees")]).parent
+
+
+def size_of(path):
+    p = Path(path)
+    if p.is_symlink():
+        return 0
+    if p.is_file():
+        try:
+            return p.stat().st_size
+        except OSError:
+            return 0
+    total = 0
+    for root, _, files in os.walk(p, onerror=lambda _: None):
+        for f in files:
+            try:
+                total += (Path(root) / f).stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def fmt_size(n):
+    for unit, div in (("G", 1 << 30), ("M", 1 << 20), ("K", 1 << 10)):
+        if n >= div:
+            return f"{n / div:.1f}{unit}"
+    return f"{n}B"
+
+
+def state_root():
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "git-pr-review"
+
+
+def scratch_roots(extra):
+    roots = list(extra)
+    if not roots:
+        roots = [Path("/tmp")]
+        if os.environ.get("TMPDIR"):
+            roots.append(Path(os.environ["TMPDIR"]))
+    seen, out = set(), []
+    for r in roots:
+        try:
+            real = r.resolve()
+        except OSError:
+            continue
+        if real.is_dir() and real not in seen:
+            seen.add(real)
+            out.append(real)
+    return out
+
+
+def within(path, roots):
+    """True when path sits inside one of roots, symlinks resolved."""
+    try:
+        real = Path(path).resolve()
+    except OSError:
+        return False
+    return any(real == r or r in real.parents for r in roots)
+
+
+def scan_scratch(roots):
+    """Every pr-<n>* entry under the scratch roots, with the clone behind it."""
+    found = []
+    for root in roots:
+        try:
+            entries = sorted(root.iterdir())
+        except OSError:
+            continue
+        for e in entries:
+            m = PR_NAME.match(e.name)
+            if m:
+                found.append((e, int(m.group(1)), clone_of(e)))
+    return found
+
+
+def worktrees_of(clone):
+    """(path, branch) per registered worktree, main one excluded."""
+    trees, cur = [], None
+    for line in git(["worktree", "list", "--porcelain"], clone).stdout.splitlines():
+        if line.startswith("worktree "):
+            if cur:
+                trees.append(cur)
+            cur = {"path": Path(line[len("worktree "):]), "branch": None}
+        elif line.startswith("branch ") and cur:
+            cur["branch"] = line[len("branch "):].replace("refs/heads/", "", 1)
+    if cur:
+        trees.append(cur)
+    return [(t["path"], t["branch"]) for t in trees[1:]]
+
+
+def pr_branches(clone):
+    out = git(["for-each-ref", "--format=%(refname:short)", "refs/heads/"], clone).stdout
+    return [b for b in out.split() if PR_NAME.match(b)]
+
+
+def parse_args(argv):
+    if "-h" in argv or "--help" in argv:
+        sys.exit(__doc__.strip())
+    opts = {"delete": "--delete" in argv, "repos": [], "roots": [], "prs": set()}
+    flags = {"--repo-path": "repos", "--scratch-root": "roots", "--pr": "prs"}
+    for i, a in enumerate(argv):
+        if a not in flags or i + 1 >= len(argv):
+            continue
+        val = argv[i + 1]
+        if a == "--pr":
+            if not val.isdigit():
+                sys.exit(f"--pr wants a number, got {val!r}")
+            opts["prs"].add(int(val))
+        else:
+            opts[flags[a]].append(Path(val).expanduser())
+    return opts
+
+
+def clones_from_state(store):
+    """repo_path values recorded in review.json, for when only a branch is left."""
+    out = []
+    if not store.is_dir():
+        return out
+    for review in sorted(store.glob("*/review.json")):
+        try:
+            path = json.loads(review.read_text()).get("repo_path")
+        except (OSError, ValueError):
+            continue
+        if path and Path(path).expanduser().is_dir():
+            out.append(Path(path).expanduser())
+    return out
+
+
+def find_clones(asked, scratch, store):
+    """Clones to sweep: the ones asked for, the ones worktrees and state point at, the cwd."""
+    clones = {p.resolve(): None for p in asked}
+    for _, _, clone in scratch:
+        if clone and clone.is_dir():
+            clones.setdefault(clone.resolve(), None)
+    for p in clones_from_state(store):
+        clones.setdefault(p.resolve(), None)
+    common = git(["rev-parse", "--path-format=absolute", "--git-common-dir"], Path.cwd()).stdout.strip()
+    if common:
+        clones.setdefault(Path(common).parent.resolve(), None)
+    return {c: repo_slug(c) for c in clones}
+
+
+def remove(kind, target, clone, roots, store):
+    """Delete one leftover. Returns (ok, reason when not)."""
+    if kind == "branch":
+        out = git(["branch", "-D", target], clone)
+        reason = out.stderr.strip().splitlines()[0] if out.stderr.strip() else "failed"
+        return out.returncode == 0, reason
+
+    real = Path(target).resolve()
+    cwd = Path.cwd().resolve()
+    if real == cwd or real in cwd.parents:
+        return False, "it is the current directory or an ancestor"
+    if kind == "state dir":
+        if not within(real, [store.resolve()]):
+            return False, f"outside {store}"
+    elif not within(real, roots):
+        return False, "outside the scratch roots"
+
+    if kind == "worktree" and git(["worktree", "remove", "--force", str(target)], clone).returncode == 0:
+        return True, ""
+    # The admin entry can be gone while the directory remains; drop it by hand.
+    try:
+        if real.is_dir():
+            shutil.rmtree(real)
+        else:
+            real.unlink()
+    except OSError as err:
+        return False, str(err)
+    if clone:
+        git(["worktree", "prune"], clone)
+    return True, ""
 
 
 def main():
-    delete = "--delete" in sys.argv[1:]
-    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
-    root = Path(base) / "git-pr-review"
-    if not root.is_dir():
-        sys.exit(f"no state store at {root}")
+    opts = parse_args(sys.argv[1:])
+    roots = scratch_roots(opts["roots"])
+    store = state_root()
+    clones = find_clones(opts["repos"], scan_scratch(roots), store)
 
-    for d in sorted(p for p in root.iterdir() if p.is_dir()):
+    # Reviews often run inside a per-session scratchpad, which a top-level /tmp
+    # scan never reaches. The registered worktrees say where those live, so take
+    # their parents as scratch roots too and rescan for the litter beside them.
+    nested = {p.parent for c in clones for p, _ in worktrees_of(c) if PR_NAME.match(p.name)}
+    roots = scratch_roots(list(roots) + sorted(nested))
+    scratch = scan_scratch(roots)
+    repos = sorted({s for s in clones.values() if s})
+
+    print(f"state store {store}")
+    print(f"scratch roots {', '.join(str(r) for r in roots)}")
+    for clone, slug in sorted(clones.items()):
+        print(f"clone {clone} -> {slug or 'no origin remote'}")
+    if not repos:
+        print("no clone resolved; worktrees, branches and scratch entries need --repo-path")
+
+    def resolve(pr, prefer=None):
+        """(state, repo) for a PR number. OPEN in any known repo means keep."""
+        seen = []
+        for r in ([prefer] if prefer in repos else []) + [x for x in repos if x != prefer]:
+            s = pr_state(r, pr)
+            if s == "OPEN":
+                return "OPEN", r
+            if s:
+                seen.append((s, r))
+        return seen[0] if seen else (None, None)
+
+    plan, kept, unresolved = {}, [], []
+
+    def wanted(pr):
+        return not opts["prs"] or pr in opts["prs"]
+
+    def add(pr, repo, state, kind, target, clone=None):
+        e = plan.setdefault(pr, {"repo": repo, "state": state, "items": []})
+        e["repo"] = e["repo"] or repo
+        size = 0 if kind == "branch" else size_of(target)
+        e["items"].append((kind, target, clone, size))
+
+    for d in sorted(p for p in store.iterdir() if p.is_dir()) if store.is_dir() else []:
         owner, _, rest = d.name.partition("-")
-        repo, _, pr = rest.rpartition("-")
-        if not pr.isdigit() or not repo:
-            print(f"{d.name}: skipped, name is not <owner>-<repo>-<pr>")
+        repo, _, num = rest.rpartition("-")
+        if not num.isdigit() or not repo:
+            unresolved.append(f"{d.name}: name is not <owner>-<repo>-<pr>")
             continue
-        state = pr_state(f"{owner}/{repo}", pr)
+        pr = int(num)
+        if not wanted(pr):
+            continue
+        slug = f"{owner}/{repo}"
+        state = pr_state(slug, pr)
         if state is None:
-            print(f"{d.name}: skipped, gh could not read {owner}/{repo}#{pr}")
+            unresolved.append(f"{d.name}: gh could not read {slug}#{pr}")
         elif state == "OPEN":
-            print(f"{d.name}: kept, OPEN")
-        elif delete:
-            shutil.rmtree(d)
-            print(f"{d.name}: deleted, {state}")
+            kept.append(f"{d.name}: OPEN")
         else:
-            print(f"{d.name}: would delete, {state}")
+            add(pr, slug, state, "state dir", d)
+
+    registered = set()
+    for clone, slug in sorted(clones.items()):
+        for path, _ in worktrees_of(clone):
+            registered.add(path.resolve())
+            m = PR_NAME.match(path.name)
+            if not m or not wanted(int(m.group(1))):
+                continue
+            pr = int(m.group(1))
+            state, repo = resolve(pr, slug)
+            if state is None:
+                unresolved.append(f"{path}: no clone could resolve #{pr}")
+            elif state == "OPEN":
+                kept.append(f"{path}: OPEN")
+            else:
+                add(pr, repo, state, "worktree", path, clone)
+        for b in pr_branches(clone):
+            pr = int(PR_NAME.match(b).group(1))
+            if not wanted(pr):
+                continue
+            state, repo = resolve(pr, slug)
+            if state is None:
+                unresolved.append(f"{clone}: branch {b}, no clone could resolve #{pr}")
+            elif state == "OPEN":
+                kept.append(f"{clone}: branch {b}, OPEN")
+            else:
+                add(pr, repo, state, "branch", b, clone)
+
+    for entry, pr, clone in scratch:
+        if not wanted(pr) or entry.resolve() in registered:
+            continue  # already planned as a registered worktree
+        state, repo = resolve(pr, repo_slug(clone) if clone else None)
+        if state is None:
+            unresolved.append(f"{entry}: no clone could resolve #{pr}")
+        elif state == "OPEN":
+            kept.append(f"{entry}: OPEN")
+        else:
+            kind = "orphan worktree" if clone else ("loose file" if entry.is_file() else "orphan dir")
+            add(pr, repo, state, kind, entry, clone)
+
+    print()
+    if not plan:
+        print("nothing to remove")
+    total = 0
+    for pr in sorted(plan):
+        e = plan[pr]
+        print(f"#{pr} {e['repo'] or 'unknown repo'} {e['state']}")
+        for kind, target, clone, size in sorted(e["items"], key=lambda i: ORDER[i[0]]):
+            total += size
+            tag = f" {fmt_size(size)}" if size else ""
+            if not opts["delete"]:
+                print(f"  would delete {kind}: {target}{tag}")
+                continue
+            ok, why = remove(kind, target, clone, roots, store)
+            print(f"  {'deleted' if ok else 'kept'} {kind}: {target}{tag}{'' if ok else f'  ({why})'}")
+
+    if opts["delete"]:
+        for clone in clones:
+            git(["worktree", "prune"], clone)
+
+    print()
+    if kept:
+        print(f"kept {len(kept)}:")
+        for k in kept:
+            print(f"  {k}")
+    if unresolved:
+        print(f"unresolved {len(unresolved)}, left alone:")
+        for u in unresolved:
+            print(f"  {u}")
+    if total:
+        print(f"{'reclaimed' if opts['delete'] else 'would reclaim'} {fmt_size(total)}")
+    if plan and not opts["delete"]:
+        print("re-run with --delete to remove")
 
 
 if __name__ == "__main__":

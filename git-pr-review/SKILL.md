@@ -37,6 +37,8 @@ This review posts only functional issues that block merge: a correctness bug, da
 
 Verify, don't skim. Isolate the PR in a throwaway worktree (`git fetch origin pull/<pr>/head:pr-<pr>` then `git worktree add /tmp/pr-<pr> pr-<pr>`; remove it after), run the affected tests there, and trace the call paths. Never call something broken or correct without checking it; "probably" means you haven't verified yet. A hazard you can reason through but can't trigger isn't a dead end: raise it as the open question it is, don't drop it for want of a repro.
 
+Name every path a review creates `pr-<pr>` or `pr-<pr>-<agent>`, worktrees and scratch alike, and put the scratch beside its worktree. A built binary, a probe script, a patch, a captured log: all of it goes in `pr-<pr>-<agent>/` or under that exact prefix. [§ Clean up](#clean-up-clean-up) finds leftovers by that prefix and by nothing else, so anything named otherwise survives every sweep and is yours to delete by hand.
+
 Leave the feedback as inline draft comments, each anchored to the line it's about. Keep the review pending/draft. Never send it to the PR unless the user tells you to.
 
 Every comment MUST use the voice in [§ Voice](#voice); there is no plain mode and no skipping it: concise, casual, like a coworker, what and why, super clear. Ask a question instead of a directive where it fits, but don't overdo it. One finding per comment, and every comment is a functional blocker, never a nit or a preference. No titles, no labels like `test (nit):` or `naming:`. Backtick repo names, code, symbols, and paths. Clean markdown. Apply the `humanizer` and `stop-slop` skills.
@@ -50,7 +52,7 @@ Every comment MUST use the voice in [§ Voice](#voice); there is no plain mode a
 ## State store
 
 - `STATE=${XDG_STATE_HOME:-$HOME/.local/state}/git-pr-review/<owner>-<repo>-<pr>/`. Your scratchpad, not a copy of the PR; keep only what GitHub doesn't (your reasoning and the user's instructions).
-- `review.json`: review id, last-seen head SHA, last comment cursor, and the user's standing instructions for this review.
+- `review.json`: review id, last-seen head SHA, last comment cursor, the user's standing instructions for this review, and `repo_path`, the absolute path of the local clone you worked in. Write `repo_path` on the first run; it is how the sweep finds the clone once the worktrees are gone and only a branch is left.
 - `notes.jsonl`, keyed by the GitHub review-comment id: why you flagged it, the judge verdict, your current take (`open`/`resolved`/`dropped`), and what the author's replies changed.
 - `evidence/<agent>.md`: one file per reviewer/judge subagent, raw and unsummarized: quoted code with `file:line`, full test sources, exact commands, unedited output, dead ends, and what went unchecked. Written by the subagent itself, complete enough that someone else can reproduce every claim from the file alone. Keep these; they outlive the subagents.
 - `replies.json` (written by `fetch_replies.py`) and `replies-out.json` (drafts for `post_replies.py`): the follow-up round's input and output.
@@ -58,8 +60,21 @@ Every comment MUST use the voice in [§ Voice](#voice); there is no plain mode a
 
 ## Clean up (`clean-up`)
 
-- `scripts/cleanup_state.py` lists every state-store directory with its PR state; add `--delete` to remove the merged and closed ones. Open PRs stay.
+A finished review leaves litter in four places, and a review is finished the moment its PR merges or closes. Sweep all four, never just the state store:
+
+- the state-store directory,
+- the worktrees, `pr-<pr>` and every `pr-<pr>-<agent>` a subagent made,
+- the local `pr-<pr>` branch,
+- the scratch beside those worktrees: orphaned worktree directories whose git entry is already pruned, probe scripts, patches, captured logs, and built binaries, which are usually the bulk of the bytes.
+
+Run `scripts/cleanup_state.py` to list all of it grouped by PR, then `--delete` to remove it. Both modes print each path with its size and end with the total. Add `--repo-path <clone>` for a clone it did not find on its own, `--scratch-root <dir>` for a scratch directory outside `/tmp` and `$TMPDIR`, and `--pr <n>` to sweep one PR.
+
+The script finds clones by itself: it reads the `.git` file of each worktree it sees, the `repo_path` in each `review.json`, and the current directory. It picks up per-session scratchpads by taking the parent of every `pr-<pr>` worktree as another scratch root, so nested paths a `/tmp` scan would miss still get swept.
+
 - Show the list to the user before you delete.
+- It only ever touches names matching `pr-<number>` or `pr-<number>-<suffix>`, so keep to that convention (see [§ The review](#the-review)) or the sweep cannot see your leftovers.
+- An OPEN PR is never touched. Neither is anything whose state `gh` cannot read; those are reported as unresolved and left for the user. Same for a worktree holding the current directory, and for any path outside the state store and the scratch roots.
+- Deleting is destructive and forced: a dirty worktree goes too, since a review worktree is throwaway by construction. Read the dry run before you pass `--delete`.
 
 ## Post the draft (private)
 
@@ -79,7 +94,7 @@ The review already happened; this round checks whether it was answered well. Reb
 - Start from the state store: `review.json`, `comment_ids.json`, and `evidence/` already hold the reviewed head SHA, the thread roots, the user's standing instructions, and the repros.
 - `scripts/fetch_replies.py <owner/repo> <pr>` fetches the replies, pairs them to our threads, writes `$STATE/replies.json`, and warns when the head moved since the review.
 - Expect a rebase. Commit SHAs cited in replies may be gone; fetch the current head (`git fetch origin pull/<pr>/head:pr-<pr>`) and verify each claim by content there, matching the cited commits by subject.
-- Verify every "fixed in X" claim and review the fix itself; never take the reply's word. Run this as a Workflow too, one subagent per fix area in parallel, each in its own detached worktree (`git worktree add --detach <dir> <head-sha>`, removed after), same model and effort bar as [§ The review](#the-review), each writing `evidence/<agent>.md` as in [§ The review](#the-review). Re-run the repros from `evidence/`: a fixed bug's repro must stop failing, and a new test must pin the fix. Hold each fix commit to the original review's bar (correct, simple, idiomatic, no new bugs); anything it breaks or leaves half-done becomes a new draft comment. Fact-check the excuses too: "predates this PR" means diffing that code against the merge-base; "also affects X" means tracing X's path.
+- Verify every "fixed in X" claim and review the fix itself; never take the reply's word. Run this as a Workflow too, one subagent per fix area in parallel, each in its own detached worktree (`git worktree add --detach pr-<pr>-<agent> <head-sha>`, removed after), same model and effort bar as [§ The review](#the-review), each writing `evidence/<agent>.md` as in [§ The review](#the-review). Re-run the repros from `evidence/`: a fixed bug's repro must stop failing, and a new test must pin the fix. Hold each fix commit to the original review's bar (correct, simple, idiomatic, no new bugs); anything it breaks or leaves half-done becomes a new draft comment. Fact-check the excuses too: "predates this PR" means diffing that code against the merge-base; "also affects X" means tracing X's path.
 - Report to the user as a checklist first: one row per original comment, marked addressed / deferred with the reason / not addressed, then the questions the author aimed at the user. Verification detail comes after the checklist, never instead of it.
 - The author's questions are the user's to answer; wait for their decision. Then draft the reply bodies into `$STATE/replies-out.json`, proofread them with a fresh subagent against [§ Voice](#voice) and the [§ Red flags](#red-flags-rewrite-before-posting) checklist at the same model and effort bar as [§ The review](#the-review), and run `scripts/post_replies.py <owner/repo> <pr> replies-out.json`: it posts into the threads and records each outcome in `notes.jsonl`. Replies publish immediately, so only run it with user-approved bodies.
 
