@@ -56,6 +56,11 @@ Every comment MUST use the voice in [§ Voice](#voice); there is no plain mode a
 - `replies.json` (written by `fetch_replies.py`) and `replies-out.json` (drafts for `post_replies.py`): the follow-up round's input and output.
 - No tokens, no secrets.
 
+## Clean up (`clean-up`)
+
+- `scripts/cleanup_state.py` lists every state-store directory with its PR state; add `--delete` to remove the merged and closed ones. Open PRs stay.
+- Show the list to the user before you delete.
+
 ## Post the draft (private)
 
 - Before any post or repost, spawn a fresh subagent to proofread, same model and effort bar as [§ The review](#the-review): it reads this entire SKILL.md, then the summary body and every comment in `comments.json`, and checks each one against [§ Voice](#voice), its rules, and the [§ Red flags](#red-flags-rewrite-before-posting) checklist. It rewrites every body that trips a red flag down to the question and returns the corrected bodies. A comment that still trips a red flag does not post. No posted body, summary or comment, ever contains the plain-terms change explanation, which is for the user only. Post the corrected version, not your draft.
