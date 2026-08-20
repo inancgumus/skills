@@ -35,9 +35,19 @@ Check that the change is idiomatic, simple, and correct, and that it fully solve
 
 This review posts only functional issues that block merge: a correctness bug, data loss, a crash, a hang, a race, a security hole, a regression, or the change not actually solving what it set out to. Everything else stays off the PR. Naming, style, formatting, simplifications, structure and design preferences, and optional "nice to have" suggestions are not review comments here, however correct they are. Read for whether the code is idiomatic and simple so you understand it and find the functional problems, not so you can file taste. When a non-blocker is worth saying, it goes in your report to the user, never on the PR. On a clean PR the review is a one-line approval; never manufacture findings to look thorough.
 
-Verify, don't skim. Isolate the PR in a throwaway worktree (`git fetch origin pull/<pr>/head:pr-<pr>` then `git worktree add /tmp/pr-<pr> pr-<pr>`; remove it after), run the affected tests there, and trace the call paths. Never call something broken or correct without checking it; "probably" means you haven't verified yet. A hazard you can reason through but can't trigger isn't a dead end: raise it as the open question it is, don't drop it for want of a repro.
+Verify, don't skim. Isolate the PR in a throwaway worktree, run the affected tests there, and trace the call paths. Never call something broken or correct without checking it; "probably" means you haven't verified yet. A hazard you can reason through but can't trigger isn't a dead end: raise it as the open question it is, don't drop it for want of a repro.
 
-Name every path a review creates `pr-<pr>` or `pr-<pr>-<agent>`, worktrees and scratch alike, and put the scratch beside its worktree. A built binary, a probe script, a patch, a captured log: all of it goes in `pr-<pr>-<agent>/` or under that exact prefix. [§ Clean up](#clean-up-clean-up) finds leftovers by that prefix and by nothing else, so anything named otherwise survives every sweep and is yours to delete by hand.
+Make every worktree, branch and scratch directory through `scripts/scratch.py`, and never with a bare `git worktree add` or `mkdir`. Each command creates the thing, records it in `$STATE/created.jsonl`, and prints the path to work in, which is how [§ Clean up](#clean-up-clean-up) later deletes all of it by name instead of guessing:
+
+```
+scratch.py fetch    <owner/repo> <pr>            # branch pr-<pr> from the PR head
+scratch.py worktree <owner/repo> <pr>            # the main worktree, on that branch
+scratch.py worktree <owner/repo> <pr> <agent>    # one detached worktree per subagent
+scratch.py dir      <owner/repo> <pr> <suffix>   # scratch beside it
+scratch.py track    <owner/repo> <pr> file <path>
+```
+
+Tell every subagent to do the same, and to use `track` for anything it writes outside a directory the script made: a built binary, a probe script, a patch, a captured log. A path that never gets recorded survives cleanup and is yours to delete by hand, so record it even when you are about to delete it yourself.
 
 Leave the feedback as inline draft comments, each anchored to the line it's about. Keep the review pending/draft. Never send it to the PR unless the user tells you to.
 
@@ -52,7 +62,8 @@ Every comment MUST use the voice in [§ Voice](#voice); there is no plain mode a
 ## State store
 
 - `STATE=${XDG_STATE_HOME:-$HOME/.local/state}/git-pr-review/<owner>-<repo>-<pr>/`. Your scratchpad, not a copy of the PR; keep only what GitHub doesn't (your reasoning and the user's instructions).
-- `review.json`: review id, last-seen head SHA, last comment cursor, the user's standing instructions for this review, and `repo_path`, the absolute path of the local clone you worked in. Write `repo_path` on the first run; it is how the sweep finds the clone once the worktrees are gone and only a branch is left.
+- `review.json`: review id, last-seen head SHA, last comment cursor, the user's standing instructions for this review, and `repo_path`, the absolute path of the local clone you worked in. `scratch.py` fills in `repo_path` for you; it is how cleanup finds the clone once the worktrees are gone and only a branch is left.
+- `created.jsonl`: one line per worktree, branch, directory and file this review made, appended by `scratch.py`. This is what [§ Clean up](#clean-up-clean-up) deletes from, so never hand-edit it and never delete a recorded path without recording it first. `scratch.py list <owner/repo> <pr>` prints it.
 - `notes.jsonl`, keyed by the GitHub review-comment id: why you flagged it, the judge verdict, your current take (`open`/`resolved`/`dropped`), and what the author's replies changed.
 - `evidence/<agent>.md`: one file per reviewer/judge subagent, raw and unsummarized: quoted code with `file:line`, full test sources, exact commands, unedited output, dead ends, and what went unchecked. Written by the subagent itself, complete enough that someone else can reproduce every claim from the file alone. Keep these; they outlive the subagents.
 - `replies.json` (written by `fetch_replies.py`) and `replies-out.json` (drafts for `post_replies.py`): the follow-up round's input and output.
@@ -60,23 +71,22 @@ Every comment MUST use the voice in [§ Voice](#voice); there is no plain mode a
 
 ## Clean up (`clean-up`)
 
-A finished review leaves litter in four places, and a review is finished the moment its PR merges or closes. Sweep all four, never just the state store:
+A review is finished the moment its PR merges or closes, and nothing it made should outlive it: not the state-store directory, not the worktrees, not the branch, not the scratch and built binaries beside them, which are usually the bulk of the bytes.
 
-- the state-store directory,
-- the worktrees, `pr-<pr>` and every `pr-<pr>-<agent>` a subagent made,
-- the local `pr-<pr>` branch,
-- the scratch beside those worktrees: orphaned worktree directories whose git entry is already pruned, probe scripts, patches, captured logs, and built binaries, which are usually the bulk of the bytes.
+Run `scripts/cleanup_state.py` to list what would go, grouped by PR, then `--delete` to remove it. Both modes print each path with its size and end with the total. Add `--repo-path <clone>` for a clone it did not find on its own, `--scratch-root <dir>` for a scratch directory outside `/tmp` and `$TMPDIR`, and `--pr <n>` for one PR.
 
-Run `scripts/cleanup_state.py` to list all of it grouped by PR, then `--delete` to remove it. Both modes print each path with its size and end with the total. Add `--repo-path <clone>` for a clone it did not find on its own, `--scratch-root <dir>` for a scratch directory outside `/tmp` and `$TMPDIR`, and `--pr <n>` to sweep one PR.
+It removes from two sources, and the output labels which found each item:
 
-The script finds clones by itself: it reads the `.git` file of each worktree it sees, the `repo_path` in each `review.json`, and the current directory. It picks up per-session scratchpads by taking the parent of every `pr-<pr>` worktree as another scratch root, so nested paths a `/tmp` scan would miss still get swept.
+- **The manifest**, `$STATE/created.jsonl`, written by `scratch.py` as the review created each thing (see [§ The review](#the-review)). This is the whole point: what a review records, cleanup deletes by name, wherever the path lives, with no guessing.
+- **The sweep**, for reviews that predate the manifest and for paths made by hand. It looks for `pr-<number>` and `pr-<number>-<suffix>` under the scratch roots, in the clones' worktrees, and in the clones' branches. Anything it finds is marked `swept, not recorded`, which is your cue that something skipped `scratch.py`.
 
-Every leftover is judged against its own clone's repo, never against all of them at once. A worktree and a branch carry their clone; a bare scratch directory takes the clone of the `pr-<pr>` worktree sitting beside it. So `#100` merged in one clone goes even while another clone has an open `#100`, and each clone's copy is decided on its own facts.
+Clones come from the manifest, from each worktree's `.git` file, from `repo_path` in `review.json`, and from the current directory. Per-session scratchpads are picked up by taking the parent of every `pr-<pr>` worktree as another scratch root, so nested paths a `/tmp` scan would miss still get swept.
 
 - Show the list to the user before you delete.
-- It only ever touches names matching `pr-<number>` or `pr-<number>-<suffix>`, so keep to that convention (see [§ The review](#the-review)) or the sweep cannot see your leftovers.
-- An OPEN PR is never touched. Neither is anything whose state `gh` cannot read; those are reported as unresolved and left for the user. Same for a worktree holding the current directory, and for any path outside the state store and the scratch roots.
-- One case stays behind on purpose: a bare scratch entry with no worktree beside it to pin its clone, while the clones disagree about that number. It is reported as ambiguous with each clone's verdict; pass `--repo-path` to settle it.
+- An OPEN PR is never touched, nor anything whose state `gh` cannot read.
+- A recorded path is refused, loudly, when deleting it would be a mistake: a git clone, a scratch root or the state store, an ancestor of either, the current directory or an ancestor, the filesystem root, your home directory. A recorded path that is already gone is counted, not reported as a failure.
+- A swept path must sit inside a known scratch root. A recorded one need not, since the review declared it.
+- A swept entry that no clone can be pinned to, while the clones disagree about that number, is reported as ambiguous with each clone's verdict. Pass `--repo-path` to settle it.
 - Deleting is destructive and forced: a dirty worktree goes too, since a review worktree is throwaway by construction. Read the dry run before you pass `--delete`.
 
 ## Post the draft (private)
@@ -97,7 +107,7 @@ The review already happened; this round checks whether it was answered well. Reb
 - Start from the state store: `review.json`, `comment_ids.json`, and `evidence/` already hold the reviewed head SHA, the thread roots, the user's standing instructions, and the repros.
 - `scripts/fetch_replies.py <owner/repo> <pr>` fetches the replies, pairs them to our threads, writes `$STATE/replies.json`, and warns when the head moved since the review.
 - Expect a rebase. Commit SHAs cited in replies may be gone; fetch the current head (`git fetch origin pull/<pr>/head:pr-<pr>`) and verify each claim by content there, matching the cited commits by subject.
-- Verify every "fixed in X" claim and review the fix itself; never take the reply's word. Run this as a Workflow too, one subagent per fix area in parallel, each in its own detached worktree (`git worktree add --detach pr-<pr>-<agent> <head-sha>`, removed after), same model and effort bar as [§ The review](#the-review), each writing `evidence/<agent>.md` as in [§ The review](#the-review). Re-run the repros from `evidence/`: a fixed bug's repro must stop failing, and a new test must pin the fix. Hold each fix commit to the original review's bar (correct, simple, idiomatic, no new bugs); anything it breaks or leaves half-done becomes a new draft comment. Fact-check the excuses too: "predates this PR" means diffing that code against the merge-base; "also affects X" means tracing X's path.
+- Verify every "fixed in X" claim and review the fix itself; never take the reply's word. Run this as a Workflow too, one subagent per fix area in parallel, each in its own detached worktree (`scratch.py worktree <owner/repo> <pr> <agent> --at <head-sha>`, removed after), same model and effort bar as [§ The review](#the-review), each writing `evidence/<agent>.md` as in [§ The review](#the-review). Re-run the repros from `evidence/`: a fixed bug's repro must stop failing, and a new test must pin the fix. Hold each fix commit to the original review's bar (correct, simple, idiomatic, no new bugs); anything it breaks or leaves half-done becomes a new draft comment. Fact-check the excuses too: "predates this PR" means diffing that code against the merge-base; "also affects X" means tracing X's path.
 - Report to the user as a checklist first: one row per original comment, marked addressed / deferred with the reason / not addressed, then the questions the author aimed at the user. Verification detail comes after the checklist, never instead of it.
 - The author's questions are the user's to answer; wait for their decision. Then draft the reply bodies into `$STATE/replies-out.json`, proofread them with a fresh subagent against [§ Voice](#voice) and the [§ Red flags](#red-flags-rewrite-before-posting) checklist at the same model and effort bar as [§ The review](#the-review), and run `scripts/post_replies.py <owner/repo> <pr> replies-out.json`: it posts into the threads and records each outcome in `notes.jsonl`. Replies publish immediately, so only run it with user-approved bodies.
 

@@ -9,17 +9,25 @@ Usage:
   cleanup_state.py --pr 6257             # limit to one PR number
 
 A review litters in four places: the state-store directory, the throwaway
-worktrees (`pr-<pr>`, `pr-<pr>-<agent>`), the `pr-<pr>` branch, and whatever
-the subagents dropped beside their worktrees (built binaries, probe scripts,
-patches). This sweeps all four for every PR that is no longer OPEN.
+worktrees, the PR branch, and whatever the subagents dropped beside their
+worktrees (built binaries, probe scripts, patches). This removes all four for
+every PR that is no longer OPEN.
 
-Clones are discovered from the worktrees themselves, so a bare run usually
-finds everything. Each leftover is judged against its own clone's repo, so a
-merged PR goes even when another clone has an open PR of the same number.
+It works from two sources. The manifest, $STATE/created.jsonl, is the exact
+record every `scratch.py` command appends as it creates something; anything
+listed there is removed by name, wherever it lives. The sweep is the safety
+net for what predates the manifest or was made by hand: it looks for
+pr-<number> and pr-<number>-<suffix> under the scratch roots, in the clones'
+worktrees, and in the clones' branches.
+
+Clones are discovered from the manifest, from the worktrees themselves, and
+from review.json, so a bare run usually finds everything. Each leftover is
+judged against its own clone's repo, so a merged PR goes even when another
+clone has an open PR of the same number.
 
 An OPEN PR is never touched, and neither is anything whose state gh cannot
-read, nor a bare scratch entry no clone can be pinned to while the clones
-disagree about that number.
+read, nor a swept entry no clone can be pinned to while the clones disagree
+about that number.
 """
 import json
 import os
@@ -37,7 +45,9 @@ ORDER = {
     "worktree": 0,
     "orphan worktree": 1,
     "orphan dir": 2,
+    "dir": 2,
     "loose file": 3,
+    "file": 3,
     "state dir": 4,
     "branch": 5,  # after its worktrees, or git refuses to drop a checked-out branch
 }
@@ -197,8 +207,30 @@ def parse_args(argv):
     return opts
 
 
+def manifest(state_dir):
+    """What scratch.py recorded for this review: [(kind, target, clone)]."""
+    path = Path(state_dir) / "created.jsonl"
+    if not path.is_file():
+        return []
+    out = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        kind = e.get("kind")
+        target = e.get("name") if kind == "branch" else e.get("path")
+        if not kind or not target or kind not in ORDER:
+            continue
+        clone = Path(e["clone"]) if e.get("clone") else None
+        out.append((kind, target if kind == "branch" else Path(target), clone))
+    return out
+
+
 def clones_from_state(store):
-    """repo_path values recorded in review.json, for when only a branch is left."""
+    """Clones named in review.json or in a manifest, for when only a branch is left."""
     out = []
     if not store.is_dir():
         return out
@@ -209,6 +241,10 @@ def clones_from_state(store):
             continue
         if path and Path(path).expanduser().is_dir():
             out.append(Path(path).expanduser())
+    for d in sorted(p for p in store.iterdir() if p.is_dir()):
+        for _, _, clone in manifest(d):
+            if clone and clone.is_dir():
+                out.append(clone)
     return out
 
 
@@ -226,7 +262,18 @@ def find_clones(asked, scratch, store):
     return {c: repo_slug(c) for c in clones}
 
 
-def remove(kind, target, clone, roots, store):
+def too_precious(real):
+    """Refuse a target no review could ever have created."""
+    if real == Path(real.root) or real == Path.home().resolve():
+        return "it is the filesystem root or your home directory"
+    if len(real.parts) <= 2:
+        return "it is too close to the filesystem root"
+    if (real / ".git").is_dir():
+        return "it is a git clone, not a worktree"
+    return None
+
+
+def remove(kind, target, clone, roots, store, tracked=False):
     """Delete one leftover. Returns (ok, reason when not)."""
     if kind == "branch":
         out = git(["branch", "-D", target], clone)
@@ -237,10 +284,15 @@ def remove(kind, target, clone, roots, store):
     cwd = Path.cwd().resolve()
     if real == cwd or real in cwd.parents:
         return False, "it is the current directory or an ancestor"
+    danger = too_precious(real)
+    if danger:
+        return False, danger
     if kind == "state dir":
         if not within(real, [store.resolve()]):
             return False, f"outside {store}"
-    elif not within(real, roots):
+    elif not tracked and not within(real, roots):
+        # A swept path was found by name alone, so keep it inside known roots.
+        # A tracked one we created ourselves and recorded, wherever it lives.
         return False, "outside the scratch roots"
 
     if kind == "worktree" and git(["worktree", "remove", "--force", str(target)], clone).returncode == 0:
@@ -299,11 +351,46 @@ def main():
     def wanted(pr):
         return not opts["prs"] or pr in opts["prs"]
 
-    def add(pr, repo, state, kind, target, clone=None):
+    done, refused, gone = set(), [], 0
+
+    def vet(kind, target, tracked):
+        """Reject a target before anything expensive touches it."""
+        if kind == "branch":
+            return None
+        real = Path(target).resolve()
+        if not real.exists():
+            return "already gone"
+        if real == Path.cwd().resolve() or real in Path.cwd().resolve().parents:
+            return "it is the current directory or an ancestor"
+        precious = too_precious(real)
+        if precious:
+            return precious
+        if any(real == r or real in r.parents for r in roots + [store.resolve()]):
+            return "it is a scratch root or the state store, or contains one"
+        if kind == "state dir":
+            return None if within(real, [store.resolve()]) else f"outside {store}"
+        if not tracked and not within(real, roots):
+            return "outside the scratch roots"
+        return None
+
+    def add(pr, repo, state, kind, target, clone=None, tracked=False):
+        nonlocal gone
+        key = ("branch", str(clone), target) if kind == "branch" else ("path", str(Path(target).resolve()))
+        if key in done:
+            return  # the manifest already claimed it; don't plan it twice
+        done.add(key)
+        why = vet(kind, target, tracked)
+        if why == "already gone":
+            gone += 1
+            return
+        if why:
+            refused.append(f"{kind} {target}: {why}")
+            return
+        # Sizing walks the tree, so it happens only after the target is vetted.
         e = plan.setdefault(pr, {"repo": repo, "state": state, "items": []})
         e["repo"] = e["repo"] or repo
         size = 0 if kind == "branch" else size_of(target)
-        e["items"].append((kind, target, clone, size))
+        e["items"].append((kind, target, clone, size, tracked))
 
     def judge(pr, owner_repo, label, on_gone):
         """Route one leftover by its PR state. on_gone(state, repo) plans the delete."""
@@ -333,7 +420,11 @@ def main():
         elif state == "OPEN":
             kept.append(f"{d.name}: OPEN")
         else:
-            add(pr, slug, state, "state dir", d)
+            # The manifest first: it names exactly what this review made, so it
+            # needs no guessing and reaches paths outside the scratch roots.
+            for kind, target, clone in manifest(d):
+                add(pr, slug, state, kind, target, clone or None, tracked=True)
+            add(pr, slug, state, "state dir", d, tracked=True)
 
     registered, owners = set(), {}
     for clone, slug in sorted(clones.items()):
@@ -367,17 +458,20 @@ def main():
     if not plan:
         print("nothing to remove")
     total = 0
+    counts = {True: 0, False: 0}
     for pr in sorted(plan):
         e = plan[pr]
         print(f"#{pr} {e['repo'] or 'unknown repo'} {e['state']}")
-        for kind, target, clone, size in sorted(e["items"], key=lambda i: ORDER[i[0]]):
+        for kind, target, clone, size, tracked in sorted(e["items"], key=lambda i: ORDER[i[0]]):
             total += size
+            counts[tracked] += 1
             tag = f" {fmt_size(size)}" if size else ""
+            src = "" if tracked else " (swept, not recorded)"
             if not opts["delete"]:
-                print(f"  would delete {kind}: {target}{tag}")
+                print(f"  would delete {kind}: {target}{tag}{src}")
                 continue
-            ok, why = remove(kind, target, clone, roots, store)
-            print(f"  {'deleted' if ok else 'kept'} {kind}: {target}{tag}{'' if ok else f'  ({why})'}")
+            ok, why = remove(kind, target, clone, roots, store, tracked)
+            print(f"  {'deleted' if ok else 'kept'} {kind}: {target}{tag}{src}{'' if ok else f'  ({why})'}")
 
     if opts["delete"]:
         for clone in clones:
@@ -388,6 +482,12 @@ def main():
         print(f"kept {len(kept)}:")
         for k in kept:
             print(f"  {k}")
+    if refused:
+        print(f"refused {len(refused)}, a recorded path that must not be deleted:")
+        for r in refused:
+            print(f"  {r}")
+    if gone:
+        print(f"{gone} recorded {'path was' if gone == 1 else 'paths were'} already gone")
     if ambiguous:
         print(f"ambiguous {len(ambiguous)}, left alone:")
         for a in ambiguous:
@@ -396,6 +496,8 @@ def main():
         print(f"unresolved {len(unresolved)}, left alone:")
         for u in unresolved:
             print(f"  {u}")
+    if plan:
+        print(f"{counts[True]} from the manifest, {counts[False]} found by the sweep")
     if total:
         print(f"{'reclaimed' if opts['delete'] else 'would reclaim'} {fmt_size(total)}")
     if plan and not opts["delete"]:
