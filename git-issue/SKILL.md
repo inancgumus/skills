@@ -30,9 +30,9 @@ Two exceptions, both one line at most: pointing at the code that causes it (a pe
 - **Plain words.** No coined compounds, no borrowed metaphors, no "load-bearing", "fail-closed", "non-trivial". Say the everyday thing.
 - **Say it once.** No punchy closing line, no restating the summary at the end.
 - **Never narrate your investigation.** No "I traced", "I confirmed", "I ran the race detector and". Show the result, not the hunt.
-- **Show, don't tell.** Paste the real output, trimmed to the lines that carry the point. Never a full stack trace when three lines do. Never a screenshot of text.
+- **Show, don't tell, and show it in pairs.** Paste the real output, trimmed to the lines that carry the point, and put the wrong result next to the right one: expected beside actual, k6 beside the other implementation, before beside after. One reference line teaches more than a paragraph of description. Never a full stack trace when three lines do. Never a screenshot of text.
 - **Backtick** every symbol, path, flag, and version. Link every doc, spec, issue, and PR you mention.
-- **Every number comes from the script you pasted.** If the reader cannot get it by running your repro, either paste the script that produces it or drop the number. A statistic from a harness they do not have is asking them to take your word for it.
+- **Never show a number alone. Show it against what it should be.** Nobody reads `255` and feels anything. `255` beside Node's `4294305038` needs no explaining. Same for a duration, a count, a size, a hash: give the reader the reference case and let the gap do the work. A lone figure asks them to hold a standard in their head that they do not have.
 - No em dashes. No horizontal rules. Active voice.
 
 ## Bug reports
