@@ -32,7 +32,7 @@ Two exceptions, both one line at most: pointing at the code that causes it (a pe
 - **Never narrate your investigation.** No "I traced", "I confirmed", "I ran the race detector and". Show the result, not the hunt.
 - **Show, don't tell.** Paste the real output, trimmed to the lines that carry the point. Never a full stack trace when three lines do. Never a screenshot of text.
 - **Backtick** every symbol, path, flag, and version. Link every doc, spec, issue, and PR you mention.
-- **Numbers only if the reader can check them.** "Not one of 12,800 samples went above `255`" earns its place. "75.1% of bytes" does not, unless you say what you sampled.
+- **Every number comes from the script you pasted.** If the reader cannot get it by running your repro, either paste the script that produces it or drop the number. A statistic from a harness they do not have is asking them to take your word for it.
 - No em dashes. No horizontal rules. Active voice.
 
 ## Bug reports
