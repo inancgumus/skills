@@ -13,6 +13,7 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [go](go/) | Modern Go practices |
 | [git-pr](git-pr/) | Write PR descriptions in engineer-to-engineer tone |
 | [git-pr-review](git-pr-review/) | Review PRs by verifying claims and posting inline reviews via `gh` |
+| [git-issue](git-issue/) | Write and file GitHub issues, bug reports and proposals alike, as a case a maintainer will act on |
 | [git-split](git-split/) | Split big commits into smaller, atomic ones |
 | [gh-review-reqs](gh-review-reqs/) | List open GitHub PRs that need your review attention, across all repos |
 | [heartbeat](heartbeat/) | Per-person summary of what each team member worked on over a window, from GitHub, Slack, and Google Workspace |
