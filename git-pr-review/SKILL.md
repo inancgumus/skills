@@ -71,9 +71,12 @@ Run `scripts/cleanup_state.py` to list all of it grouped by PR, then `--delete` 
 
 The script finds clones by itself: it reads the `.git` file of each worktree it sees, the `repo_path` in each `review.json`, and the current directory. It picks up per-session scratchpads by taking the parent of every `pr-<pr>` worktree as another scratch root, so nested paths a `/tmp` scan would miss still get swept.
 
+Every leftover is judged against its own clone's repo, never against all of them at once. A worktree and a branch carry their clone; a bare scratch directory takes the clone of the `pr-<pr>` worktree sitting beside it. So `#100` merged in one clone goes even while another clone has an open `#100`, and each clone's copy is decided on its own facts.
+
 - Show the list to the user before you delete.
 - It only ever touches names matching `pr-<number>` or `pr-<number>-<suffix>`, so keep to that convention (see [§ The review](#the-review)) or the sweep cannot see your leftovers.
 - An OPEN PR is never touched. Neither is anything whose state `gh` cannot read; those are reported as unresolved and left for the user. Same for a worktree holding the current directory, and for any path outside the state store and the scratch roots.
+- One case stays behind on purpose: a bare scratch entry with no worktree beside it to pin its clone, while the clones disagree about that number. It is reported as ambiguous with each clone's verdict; pass `--repo-path` to settle it.
 - Deleting is destructive and forced: a dirty worktree goes too, since a review worktree is throwaway by construction. Read the dry run before you pass `--delete`.
 
 ## Post the draft (private)

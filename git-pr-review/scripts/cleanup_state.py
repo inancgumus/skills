@@ -14,8 +14,12 @@ the subagents dropped beside their worktrees (built binaries, probe scripts,
 patches). This sweeps all four for every PR that is no longer OPEN.
 
 Clones are discovered from the worktrees themselves, so a bare run usually
-finds everything. An OPEN PR is never touched, and neither is anything whose
-state gh cannot read.
+finds everything. Each leftover is judged against its own clone's repo, so a
+merged PR goes even when another clone has an open PR of the same number.
+
+An OPEN PR is never touched, and neither is anything whose state gh cannot
+read, nor a bare scratch entry no clone can be pinned to while the clones
+disagree about that number.
 """
 import json
 import os
@@ -275,18 +279,22 @@ def main():
     if not repos:
         print("no clone resolved; worktrees, branches and scratch entries need --repo-path")
 
-    def resolve(pr, prefer=None):
-        """(state, repo) for a PR number. OPEN in any known repo means keep."""
-        seen = []
-        for r in ([prefer] if prefer in repos else []) + [x for x in repos if x != prefer]:
-            s = pr_state(r, pr)
-            if s == "OPEN":
-                return "OPEN", r
-            if s:
-                seen.append((s, r))
-        return seen[0] if seen else (None, None)
+    # Attribution is per clone. A leftover whose clone is known is judged against
+    # that clone's repo alone, so a merged PR in one repo goes even while another
+    # repo has an open PR wearing the same number.
+    def resolve(pr, owner_repo=None):
+        """(state, repo) for a PR number. AMBIGUOUS when clones disagree."""
+        if owner_repo:
+            return pr_state(owner_repo, pr), owner_repo
+        seen = [(pr_state(r, pr), r) for r in repos]
+        seen = [(s, r) for s, r in seen if s]
+        if not seen:
+            return None, None
+        if len({s for s, _ in seen}) > 1:
+            return "AMBIGUOUS", ", ".join(f"{r} {s}" for s, r in seen)
+        return seen[0]
 
-    plan, kept, unresolved = {}, [], []
+    plan, kept, unresolved, ambiguous = {}, [], [], []
 
     def wanted(pr):
         return not opts["prs"] or pr in opts["prs"]
@@ -296,6 +304,18 @@ def main():
         e["repo"] = e["repo"] or repo
         size = 0 if kind == "branch" else size_of(target)
         e["items"].append((kind, target, clone, size))
+
+    def judge(pr, owner_repo, label, on_gone):
+        """Route one leftover by its PR state. on_gone(state, repo) plans the delete."""
+        state, repo = resolve(pr, owner_repo)
+        if state is None:
+            unresolved.append(f"{label}: no clone could resolve #{pr}")
+        elif state == "AMBIGUOUS":
+            ambiguous.append(f"{label}: #{pr} differs by clone ({repo}), pass --repo-path to pick one")
+        elif state == "OPEN":
+            kept.append(f"{label}: OPEN")
+        else:
+            on_gone(state, repo)
 
     for d in sorted(p for p in store.iterdir() if p.is_dir()) if store.is_dir() else []:
         owner, _, rest = d.name.partition("-")
@@ -315,44 +335,33 @@ def main():
         else:
             add(pr, slug, state, "state dir", d)
 
-    registered = set()
+    registered, owners = set(), {}
     for clone, slug in sorted(clones.items()):
         for path, _ in worktrees_of(clone):
             registered.add(path.resolve())
             m = PR_NAME.match(path.name)
-            if not m or not wanted(int(m.group(1))):
+            if not m:
                 continue
             pr = int(m.group(1))
-            state, repo = resolve(pr, slug)
-            if state is None:
-                unresolved.append(f"{path}: no clone could resolve #{pr}")
-            elif state == "OPEN":
-                kept.append(f"{path}: OPEN")
-            else:
-                add(pr, repo, state, "worktree", path, clone)
+            # Scratch sits beside its worktree, so this is what tells a bare
+            # pr-<pr>-probe directory which repo's PR it came from.
+            owners.setdefault((path.parent.resolve(), pr), (clone, slug))
+            if wanted(pr):
+                judge(pr, slug, str(path), lambda s, r, p=path, c=clone, n=pr: add(n, r, s, "worktree", p, c))
         for b in pr_branches(clone):
             pr = int(PR_NAME.match(b).group(1))
-            if not wanted(pr):
-                continue
-            state, repo = resolve(pr, slug)
-            if state is None:
-                unresolved.append(f"{clone}: branch {b}, no clone could resolve #{pr}")
-            elif state == "OPEN":
-                kept.append(f"{clone}: branch {b}, OPEN")
-            else:
-                add(pr, repo, state, "branch", b, clone)
+            if wanted(pr):
+                judge(pr, slug, f"{clone}: branch {b}",
+                      lambda s, r, b=b, c=clone, n=pr: add(n, r, s, "branch", b, c))
 
     for entry, pr, clone in scratch:
         if not wanted(pr) or entry.resolve() in registered:
             continue  # already planned as a registered worktree
-        state, repo = resolve(pr, repo_slug(clone) if clone else None)
-        if state is None:
-            unresolved.append(f"{entry}: no clone could resolve #{pr}")
-        elif state == "OPEN":
-            kept.append(f"{entry}: OPEN")
-        else:
-            kind = "orphan worktree" if clone else ("loose file" if entry.is_file() else "orphan dir")
-            add(pr, repo, state, kind, entry, clone)
+        kind = "orphan worktree" if clone else ("loose file" if entry.is_file() else "orphan dir")
+        slug = repo_slug(clone) if clone else None
+        if not slug:
+            clone, slug = owners.get((entry.parent.resolve(), pr), (clone, None))
+        judge(pr, slug, str(entry), lambda s, r, e=entry, c=clone, k=kind, n=pr: add(n, r, s, k, e, c))
 
     print()
     if not plan:
@@ -379,6 +388,10 @@ def main():
         print(f"kept {len(kept)}:")
         for k in kept:
             print(f"  {k}")
+    if ambiguous:
+        print(f"ambiguous {len(ambiguous)}, left alone:")
+        for a in ambiguous:
+            print(f"  {a}")
     if unresolved:
         print(f"unresolved {len(unresolved)}, left alone:")
         for u in unresolved:
