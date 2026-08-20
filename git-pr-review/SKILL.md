@@ -64,6 +64,7 @@ Every comment MUST use the voice in [§ Voice](#voice); there is no plain mode a
 - `STATE=${XDG_STATE_HOME:-$HOME/.local/state}/git-pr-review/<owner>-<repo>-<pr>/`. Your scratchpad, not a copy of the PR; keep only what GitHub doesn't (your reasoning and the user's instructions).
 - `review.json`: review id, last-seen head SHA, last comment cursor, the user's standing instructions for this review, and `repo_path`, the absolute path of the local clone you worked in. `scratch.py` fills in `repo_path` for you; it is how cleanup finds the clone once the worktrees are gone and only a branch is left.
 - `created.jsonl`: one line per worktree, branch, directory and file this review made, appended by `scratch.py`. This is what [§ Clean up](#clean-up-clean-up) deletes from, so never hand-edit it and never delete a recorded path without recording it first. `scratch.py list <owner/repo> <pr>` prints it.
+- `voice.md`: every wording change any body on this PR went through, and why. Append to it whenever a comment, summary/opener or reply body changes: your own redrafts, the proofreader's rewrites, and above all the user's own edits on GitHub. Record the before, the after, and what the change tells you, then write the remaining comments and replies to match. This is how a correction survives past the turn it happened in; nothing here goes to long-term memory.
 - `notes.jsonl`, keyed by the GitHub review-comment id: why you flagged it, the judge verdict, your current take (`open`/`resolved`/`dropped`), and what the author's replies changed.
 - `evidence/<agent>.md`: one file per reviewer/judge subagent, raw and unsummarized: quoted code with `file:line`, full test sources, exact commands, unedited output, dead ends, and what went unchecked. Written by the subagent itself, complete enough that someone else can reproduce every claim from the file alone. Keep these; they outlive the subagents.
 - `replies.json` (written by `fetch_replies.py`) and `replies-out.json` (drafts for `post_replies.py`): the follow-up round's input and output.
@@ -95,6 +96,7 @@ Clones come from the manifest, from each worktree's `.git` file, from `repo_path
 - Put the comments in `comments.json` and run `scripts/post_pending_review.py <owner/repo> <pr> comments.json [--body "summary"]`. It resolves the head SHA, posts one PENDING review, and checks the drafts aren't public. The `--body` is at most the optional one-line opener; never put the plain-terms change explanation there, it is for the user only.
 - Anchor each comment to a diff line (`RIGHT` for added/context, `LEFT` for removed) or GitHub rejects it (422). If the code isn't in the diff, anchor to the nearest changed line and say so. Pull valid lines from the `files` patches. Mechanics: [references/pending-review.md](references/pending-review.md).
 - Confirm `state=PENDING` and `published delta: 0`, save the ids, and hand the user the Files-changed URL. Don't submit. To change a draft, delete and repost: `gh api -X DELETE repos/{owner}/{repo}/pulls/reviews/{review_id}`, then rerun.
+- Append every body change to `voice.md` as you make it: your redrafts, the proofreader's rewrites, and the user's own edits. Before writing any further body on this PR, re-read that file and follow it; it outranks your first instinct and the examples below, because it is this user on this review. When the user rewrites a body, re-read the live version with `gh api repos/{owner}/{repo}/pulls/comments/{comment_id} --jq .body`, diff it against yours, and record what they cut.
 
 ## Submit (only on the user's say-so)
 
@@ -124,6 +126,8 @@ This section is mandatory for every body that lands on GitHub: review comments, 
 The comment's whole job is to make the author look at one spot and decide for themselves. It is not there to prove you are right, to teach them how their own code works, or to hand them the fix. However much digging it took to find the spot, none of that goes in the comment. Ask whether the thing you suspect is real, point at the one place, and stop. The author validates, not you.
 
 So the target shape is small and shaped like a question. A long comment is not thorough, it is a mistake you have not caught yet. Big, or explaining, or fixing means you are making your case at the author instead of asking them, and it gets rewritten before it posts (see [§ Red flags](#red-flags-rewrite-before-posting)). Be humble and hand the judgment over. State a doubt as a question the author answers, not as a claim you assert. Say nothing about what you did to find it; a review comment never contains "I traced", "I confirmed", "I checked", or "I think".
+
+Read `$STATE/voice.md` before every body you write. It holds the wording corrections this review already earned, and a correction the user made themselves beats anything below.
 
 Write every comment the way these examples do. They are real review comments, verbatim, from many different PRs. Absorb the register, the hedging, and the shape; never reuse the words. Re-read them before each comment.
 
@@ -203,6 +207,7 @@ Run this against every comment body before it goes into `comments.json`, and aga
 - **A fix, a patch, or a `suggestion` block for a problem the author has not agreed is real.** Ask whether the problem is real first. The fix is a separate, later step, and usually theirs to pick.
 - **The mechanism spelled out** past the one clause the question needs (which function calls which, why it fails, what the flag defaults to). Cut it to the question.
 - **A verdict:** "this breaks", "this is a bug", "this will fail". Turn it into the question that makes the author reach that conclusion themselves.
+- **It repeats something `$STATE/voice.md` already says to cut.** A correction the user made once applies to every body after it. Re-read that file and strip what they struck.
 - **The comment reads fine with the author's answer already assumed.** If you are not actually waiting for their reply, you are lecturing, not reviewing.
 
 The reflex: the moment a comment feels thorough or complete, treat that as the warning, not the goal. Delete a sentence, turn the claim into a question, and post the smallest version that still points at the spot.
