@@ -8,6 +8,7 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 |-------|-------------|
 | [slack](slack/) | Read, navigate, search, and send messages in Slack via the desktop app |
 | [handoff](handoff/) | Write or load a HANDOFF.md to preserve and restore session state across agent sessions |
+| [learnings](learnings/) | Add new reusable lessons from a completed agent session without duplicating existing guidance |
 | [designdoc](designdoc/) | Write or rewrite technical design docs, RFCs, and proposals for cold readers |
 | [flowchart](flowchart/) | Generate flowcharts and architecture diagrams as interactive HTML or Markdown+ASCII |
 | [go](go/) | Modern Go practices |
@@ -51,6 +52,9 @@ The script is idempotent — run it after cloning on a new machine, or after add
 - Slack desktop app (auto-launched with CDP if not already running)
 
 **handoff**
+- No dependencies
+
+**learnings**
 - No dependencies
 
 **designdoc**
