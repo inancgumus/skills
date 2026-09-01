@@ -29,3 +29,9 @@ Ensure sorting new lessons by importance and priority.
 If no unique lesson remains, leave the file unchanged and state that the session produced no new lessons.
 
 Before editing the file, show the exact unified diff and stop for explicit user approval. Do not treat the request to use this skill as approval. After approval, read the file again. If it changed or the approved diff no longer applies exactly, show a revised diff and request approval again. Otherwise, apply only the approved diff and report the lessons added.
+
+## Skills
+
+Some learnings may belong to current skills and may not deserve an update in
+the `learnings.md`. Find and update those skills with these learnings (after
+asking for approval from the user, as always).
