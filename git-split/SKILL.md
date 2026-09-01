@@ -1,55 +1,59 @@
 ---
 name: git-split
-description: Split a big commit into smaller, atomic commits. Use when the user asks to split commits, break up a large commit, decompose changes into logical units, or create atomic commits from staged/unstaged changes.
+description: Use to split commits into atomic commits
 ---
-
 # Git Split
 
-Construct a clean, reviewable history from a large diff.
+Construct a clean, reviewable history from a large diff. The goal is not to
+carve one final diff into smaller pieces. The goal is to build a sequence of
+commits from scratch where each commit is a coherent, green historical state.
 
-The goal is not to carve one final diff into smaller pieces. The goal is to build a sequence of
-commits where each commit is a coherent, green historical state.
+Good real-life split example to follow: `references/example.md`
 
-## When to Use
+## Behavior
 
-Use this skill when the user asks to:
-- Split a big commit into smaller ones
-- Break up a large diff into atomic commits
-- Decompose changes into logical units
-- Create well-structured commit history from a batch of changes
+Treat the current branch changes as the goal that you'll rebuild from scratch.
+This branch is the end product, but your atomic commits will rewrite it. Each
+behavior addition, file renames, code movements, refactorings, fixes, etc.
+must go to different commits.
 
-Good real-life split example to follow:
-`references/good-real-life-split-example.md`
-
-## Core Standard
+## Rules
 
 - Historical coherence beats diff neatness.
+- Each commit should be reviewable at a glance and on its own.
 - One commit = one primary reason to change, review, and revert.
-- Every commit must make sense to a reviewer who only sees that commit and its parent.
-- Keep each commit as close to its parent as possible outside the behavior being changed. Do not
-  rename stable symbols, rewrite comments, reformat code, reorder nearby code, or move helpers
-  around unless that change is required for the commit's actual purpose.
-- User-provided constraints override the skill's generic defaults. Turn them into explicit active
-  rewrite rules and keep applying them for the rest of the split.
-- Every commit must pass the repo's formatter, linter, and relevant tests on its own.
-- Tests and wiring belong with the behavior they validate. Do not push tests to the end by default.
-- Shared helpers and test scaffolding are part of the feature boundary. Do not introduce future-only
-  seams early just because they are convenient.
-- Avoid convenience cleanup. If a change does not help the current commit's behavior, proof, or
-  mechanical extraction, leave it out.
-- If a commit removes or modifies existing code, behavior, or functionality, the rationale must
-  explain why that change is correct and what replaces it, if anything.
-- If a commit only works because of a later commit, the split is wrong.
+- Tests and wiring belong with the behavior they validate.
+- A commit must make sense to a reviewer who only sees it and its parent.
+- Each commit is as close to its parent outside the behavior being changed.
+- Do not rename stable symbols, rewrite comments, reformat code, reorder or move
+  nearby code around unless that change is required for the commit's purpose.
+- Every commit must pass the repo's formatter, linter, and tests on its own.
+- Shared helpers and test scaffolding are part of the feature boundary.
+  Do not introduce future-only seams early just because they are convenient.
+- Avoid convenience cleanup. If a change does not help the current commit's
+  behavior, proof, or mechanical extraction, leave it out.
+- No commit may contain two independent reasons to exist.
+- Do not mix a pure refactor with a behavior change in the same commit.
+- Do not mix one feature's tests with another feature's code.
+- Do not create "future scaffolding" commits.
+- If a symbol would be dead or unused until a later commit, merge it into the first consumer unless
+  it is a pure mechanical extraction that still leaves the tree green.
+- Comments, renames, and style edits belong with the commit whose behavior they clarify.
+- Do not introduce awkward scope blocks, shadowed variables, temporary aliases, or other
+  split-only hacks just to keep commits small. Prefer straightforward code that a maintainer would
+  actually write.
+- If a commit migrates only part of a path from old to new code, the plan must explicitly name what
+  still stays old and why that temporary split is acceptable.
+
 
 ## Workflow
 
 ### 1. Normalize the Starting Point
 
 First, identify exactly what is being split:
-- Uncommitted changes
-- Staged changes
+- Parent branch
+- Unstaged/staged changes
 - The most recent commit
-- A short range of recent commits that will be rebuilt
 
 Inspect the current state:
 
@@ -74,39 +78,15 @@ Then answer these questions before planning:
 - Does that base already pass the repo's normal gate?
 - Are there unrelated local changes that must be isolated first?
 - Which files are touched by multiple future commits?
-- Which names, comments, layout choices, and helper locations from the parent should remain intact
-  unless a commit truly needs to change them?
-- What user instructions from this conversation must persist across all later commits?
-
-If the base state does not pass lint or tests, fix that first or explicitly fold that fix into the
-base before splitting. Do not build a split on top of a known-broken base unless the user explicitly
-accepts that.
+- Which names, comments, layout choices, and helper locations from the parent
+  should remain intact unless a commit truly needs to change them?
 
 ### 2. Back Up Before Any Rewrite
 
-If the split will use `reset`, `rebase`, `cherry-pick`, or any other history rewrite, create a
-backup first.
-
-Minimum backup:
-
-```bash
-stamp=$(date +%Y%m%d-%H%M%S)
-git branch "backup/<topic>-$stamp" HEAD
-```
-
-Recommended backup for risky or lengthy rewrites:
-
-```bash
-mkdir -p "/tmp/git-split-$stamp"
-git status --short --branch > "/tmp/git-split-$stamp/status.txt"
-git log --oneline --decorate -20 > "/tmp/git-split-$stamp/log.txt"
-git diff --no-ext-diff > "/tmp/git-split-$stamp/working.patch"
-git diff --no-ext-diff --cached > "/tmp/git-split-$stamp/index.patch"
-git format-patch --stdout <base>..HEAD > "/tmp/git-split-$stamp/series.patch"
-git bundle create "/tmp/git-split-$stamp/repo.bundle" <base>..HEAD
-```
-
-Do not start rewriting until the backup exists.
+If the split will use `reset`, `rebase`, `cherry-pick`, or any other history
+rewrite, create a temporary backup first. Do not put it into the same repo.
+Do not start rewriting until the backup exists. Delete the backup once you prove
+that the end result is byte-identical to the original branch changes.
 
 ### 3. Analyze the Full End State
 
@@ -114,16 +94,14 @@ Read the touched files and map the real dependency graph, not just the file list
 
 For each candidate commit, answer:
 - What new behavior starts here?
+- Which tests must change here?
 - What must still stay old here?
 - What existing behavior disappears or changes here, if any?
 - Why is that removal or modification correct?
-- Which tests must change here?
-- Which helper or test-helper changes are only needed by later commits and must stay out?
-- Which surrounding code should stay textually close to the parent to avoid review noise?
-- If old and new implementations temporarily coexist, where is that boundary and how will the
-  commit make that handoff obvious without adding fake seams?
-- Which previously corrected patterns are now banned for the rest of the rewrite unless there is a
-  new, explicit justification?
+- Which helper changes are only needed by later commits and must stay out?
+- Which surrounding code should stay close to the parent to avoid review noise?
+- If old and new implementations temporarily coexist, where is that boundary
+  and how will the commit make that handoff obvious without adding fake seams?
 
 Important:
 - A helper is not "free plumbing". If it exists only to support a later feature, it belongs later.
@@ -135,9 +113,8 @@ Important:
 
 ### 4. Plan the Split
 
-Prefer dependency-first order, but only when each commit is still historically coherent.
-
-Good ordering rules:
+Prefer dependency-first order, but only when each commit is still historically
+coherent. Good ordering rules:
 1. Pure mechanical commits first, but only if they are genuinely behavior-free and green on their
    own.
 2. Add a helper only when it is first required, unless it is a pure extraction that is already green
@@ -145,20 +122,6 @@ Good ordering rules:
 3. Wire one caller, path, or feature at a time.
 4. Change one behavior contract at a time.
 5. Keep the tests that prove a behavior in the same commit as that behavior.
-
-Hard rules:
-- No commit may contain two independent reasons to exist.
-- Do not mix a pure refactor with a behavior change in the same commit.
-- Do not mix one feature's tests with another feature's code.
-- Do not create "future scaffolding" commits.
-- If a symbol would be dead or unused until a later commit, merge it into the first consumer unless
-  it is a pure mechanical extraction that still leaves the tree green.
-- Comments, renames, and style edits belong with the commit whose behavior they clarify.
-- Do not introduce awkward scope blocks, shadowed variables, temporary aliases, or other
-  split-only hacks just to keep commits small. Prefer straightforward code that a maintainer would
-  actually write.
-- If a commit migrates only part of a path from old to new code, the plan must explicitly name what
-  still stays old and why that temporary split is acceptable.
 
 The old default "tests last" is wrong for most real splits. Tests usually belong in the same commit
 as the behavior they validate.
@@ -311,6 +274,8 @@ extra fixup commit unless the user explicitly wants that.
 
 ## Commit Message Format
 
+Use the `write` skill if it's available.
+
 - **Title**: max 50 chars. State intent, not mechanism. Imperative verb phrase. No file references
   or implementation details.
 - Respect any user-required prefix or style.
@@ -344,11 +309,8 @@ Co-Authored-By: ...
 
 ## Done Criteria
 
-- A backup exists for any rewritten history.
-- The base state used for the split is green or has been explicitly normalized first.
 - Each commit is atomic, self-contained, and historically coherent.
-- Tests and wiring are included in the same commit as the behavior they validate unless the commit
-  is a pure mechanical refactor.
+- Tests and wiring are included in the same commit as the behavior they validate
 - Any commit that removes or modifies existing behavior explains why that change is correct.
 - The repo formatter, linter, and relevant tests pass on every final commit.
 - The final working tree exactly matches the intended end state.
