@@ -18,6 +18,7 @@ Create commits only when the user asks. Use the configured Git author without ov
 - Keep every commit buildable and passing its relevant tests and linters.
 
 Use the `git-split` skill as well when splitting or rebuilding a series of commits.
+This is a MUST for non-trivial changes.
 
 ## Commit messages
 
