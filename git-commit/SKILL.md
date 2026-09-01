@@ -23,6 +23,7 @@ Use the `git-split` skill as well when splitting or rebuilding a series of commi
 
 - Start the title with a concise imperative verb that states the benefit.
 - Keep the title within 50 characters.
+- Wrap each body line at 72 characters.
 - Explain the reason in the body when the title cannot carry it.
 - Describe the previous behavior and what improved without listing changed files.
 - Do not mention neighboring commits, verification activity, or implementation trivia.
