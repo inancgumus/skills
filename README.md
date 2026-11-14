@@ -22,6 +22,7 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [writing-style](writing-style/) | Write prose like an experienced engineer talking to another engineer |
 | [write](write/) | Write and rewrite prose without AI tells: judge, rewrite, and flag against a rubric without changing meaning |
 | [ghostvm](ghostvm/) | Run commands and drive apps inside a macOS VM with GhostVM (`vmctl`) and agent-desktop |
+| [extract-skill](extract-skill/) | Mine past agent session logs (Claude Code, Codex, opencode, pi) and write a skill from how agents really used a tool |
 
 ## Install
 
