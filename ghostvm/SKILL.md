@@ -24,7 +24,7 @@ GhostVM runs a macOS guest on Apple's Virtualization framework. Use it so GUI te
 ```sh
 $S /usr/bin/whoami                       # run a program (absolute path)
 $S sh 'cd /tmp && ls | head'             # run a shell line
-$S pull /tmp/shot.png ./shot.png         # copy a guest file to the host, any size
+$S pull /tmp/shot.jpg ./shot.jpg         # copy a guest file to the host (checksum-verified)
 $S -n other-vm /usr/bin/uptime           # pick a VM (default: the only one listed, or $VM)
 $S sh '(nohup CMD > /tmp/job.log 2>&1 &); echo started'   # long job, then: $S sh 'cat /tmp/job.log'
 ```
@@ -50,8 +50,8 @@ Other `vmctl` commands you may need:
 | Need | Do |
 |---|---|
 | Host file into the guest | The folder passed to `vmctl start --shared-folder PATH` appears at `/Volumes/My Shared Files/<name>`, read-only unless started with `--writable`. Copy before use: `$S /usr/bin/ditto "<src>" /tmp/x`. |
-| Guest file to the host | `$S pull`. Never write into the share. Write to `/tmp` in the guest first. |
-| Screenshot | `$S sh '$HOME/.local/bin/agent-desktop screenshot --screen 0 /tmp/s.png'`, then `pull`. `--app X` fails with `AMBIGUOUS_TARGET` when the app has several windows (Finder has hidden ones). Pass `--window-id` from `list-windows` instead. Use screenshots as evidence, and read the UI tree to decide what to do. |
+| Guest file to the host | `$S pull`. It checks an md5 checksum and fails on a mismatch. It is slow (about 1 MB per minute), so keep files small. Never write into the share. Write to `/tmp` in the guest first. |
+| Screenshot | `$S sh '$HOME/.local/bin/agent-desktop screenshot --screen 0 /tmp/s.png'`, then shrink it: `$S sh '/usr/bin/sips -Z 1280 -s format jpeg -s formatOptions 70 /tmp/s.png --out /tmp/s.jpg'`, then `pull /tmp/s.jpg`. `--app X` fails with `AMBIGUOUS_TARGET` when the app has several windows (Finder has hidden ones). Pass `--window-id` from `list-windows` instead. Use screenshots as evidence, and read the UI tree to decide what to do. |
 
 ## 3. Test an app
 
