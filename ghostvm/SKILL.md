@@ -5,7 +5,7 @@ description: Use GhostVM (`vmctl`) to run commands and drive apps inside a macOS
 
 # GhostVM
 
-GhostVM runs a macOS guest on Apple's Virtualization framework. The only CLI is `vmctl` (there is no `ghostvm` command). This file has everything you need, so skip `--help` and old transcripts. Assume the VM is running and set up. Run the task, and diagnose only when a call fails (see *When something fails*).
+GhostVM runs a macOS guest on Apple's Virtualization framework. Use it so GUI tests and web browsing run in an isolated guest, not on the host desktop: no stolen focus, no access to real data. agent-desktop reads and clicks the guest's apps through accessibility, which costs fewer tokens than screenshots. The only CLI is `vmctl` (there is no `ghostvm` command). This file has everything you need, so skip `--help` and old transcripts. Assume the VM is running and set up. Run the task, and diagnose only when a call fails (see *When something fails*).
 
 ## Never
 
