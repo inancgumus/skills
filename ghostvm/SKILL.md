@@ -78,7 +78,7 @@ $S sh '$HOME/.local/bin/agent-desktop skills get desktop'
 * List rows are often `treeitem` or `unknown` inside a scroll area, not `row`. Read the real roles in a snapshot before `find --role`.
 * `STALE_REF` or a ref that no longer works: refs go stale after any UI change. Snapshot again.
 * Read properties with `get <ref> --property bounds`. Get the screen size from `list-displays`, not `system_profiler`.
-* If `scroll <ref>` returns `ACTION_FAILED`, use `mouse-wheel --x --y --dy=-15 --headed`. `--headed` moves the guest's cursor and takes focus, so use it only after the headless action failed.
+* Headless actions are the default. Use `--headed` (real mouse and key events, inside the guest only) just for actions with no headless path: scroll, hover, drag, double-click. For a scroll that returns `ACTION_FAILED`, use `mouse-wheel --x --y --dy=-15 --headed`. It moves the guest's cursor and takes guest focus, so use it only when you hold the guest alone.
 * `AMBIGUOUS_TARGET`: more than one window or element matches. Narrow it with `--window-id`, or `find --role --name --exact`, or `--root`.
 * `APP_NOT_FOUND` means the app isn't running yet or the name is wrong. Use the name `list-apps` shows (often with spaces, like `Hacker News`, not `HackerNews`). Use `wait`, not `sleep`.
 * A busy app can stop answering accessibility queries. Wait a few seconds and query again before you decide it crashed.
@@ -155,7 +155,7 @@ Pass `--window-id` from `list-windows` instead of `--app`, or use `--screen 0`.
 * `STALE_REF`: snapshot again.
 * `AMBIGUOUS_TARGET`: narrow with `--window-id`, `find --role --name --exact`, or `--root`.
 * `APP_NOT_FOUND`: use the name `list-apps` shows, and `wait` for the app.
-* `ACTION_FAILED` on `scroll`: use `mouse-wheel --x --y --dy=-15 --headed`.
+* `ACTION_FAILED` on `scroll`: use `mouse-wheel --x --y --dy=-15 --headed` (the guest only, and only when you hold it alone).
 
 ## Setup (done once by a human, never redo)
 
