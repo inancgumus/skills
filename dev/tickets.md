@@ -1,20 +1,19 @@
 # Tickets
 
-A ticket is one tracked piece of work. It can be a local note, a file in the repo, an issue, a PR, or anything else, and that can change at any time.
+A ticket is one tracked piece of work. The developer decides what it is: a local file, a file in the repo, an issue, a PR, or anything else. They can change that at any time, and work can stay fully local.
 
 ## Find what a ticket is here
 
-Read `.notebook/dev.md`. If it is missing, recommend an answer from the repo, ask, and save it. Add `.notebook/` to `.git/info/exclude`. Plans and designs go where tickets live.
+Read `.notebook/dev.md`. If it is missing, ask the developer, recommending local files, and save their answer in plain lines. Add `.notebook/` to `.git/info/exclude`. Plans and designs go in `.notebook/<feature>/` unless the note says otherwise.
 
 ```markdown
-Ticket: a draft PR per behavior, with the ticket format as its body. Start it with an empty commit.
-Waits for: stack the PR on the one it waits for
-Plans: docs/plans/
-Done: the PR merges
-Finish: merge that PR
+Tickets: local files in .notebook/<feature>/
+Finish: local commit
 ```
 
 ## Write a ticket
+
+For a ticket in a file, use this format. Anywhere else, use that place's own form, such as the `git-issue` skill for GitHub issues or `git-pr` for PRs, and keep what it has no room for in `.notebook/`.
 
 ```markdown
 # NN: <Title>

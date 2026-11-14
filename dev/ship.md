@@ -12,7 +12,7 @@ Read the ticket's *Finish*, then `.notebook/dev.md`. If the work has code, run t
 
 ### Make the commits
 
-Skip this with no code, unless marking the ticket done needs a commit. Each commit has one reason to exist and passes the tests alone. Show them, then ask. Show any commits subagents already made.
+Skip this with no code, unless marking the ticket done needs a commit. Use the `git-commit` skill. Show any commits subagents already made.
 
 **Move on when** the commits exist.
 
@@ -24,14 +24,14 @@ The project's note wins over this table.
 |---|---|
 | Local commit | Nothing more. |
 | Merge | Ask, merge, and rerun the tests. |
-| PR or MR | Open a draft after approval, or mark the ticket's PR ready. Show the smallest diagram of the change, before and after proof, and whether it can be rolled back. |
+| PR | Use the `git-pr` skill. |
 | Decision or doc | Write the answer where the ticket says. |
 
 **Move on when** the work has finished, and you have given any link.
 
 ### Update the ticket
 
-Mark it done, unless a PR closes it on merge. Draft any reply to a reporter, and list the tickets this freed.
+Mark it done the way the note says, unless a PR closes it on merge. Draft any reply to a reporter, and list the tickets this freed.
 
 **Move on when** the ticket's status is right.
 

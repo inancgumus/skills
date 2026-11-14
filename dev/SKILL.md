@@ -40,5 +40,4 @@ Steps are the `###` headings under `## Steps`. Show progress, such as *Step 2 of
 - Ask before anything others can see or that is hard to undo.
 - Start subagents fresh, with a narrow brief and without your conclusion.
 - Write `<REDACTED>` in place of secrets.
-- Use an installed skill when it owns a step, such as `git-pr` or `git-split`.
-- Use the `write` skill for all text people read: tickets, commit messages, PR bodies, replies, and docs.
+- Leave writing to the skill that owns it: `git-commit` and `git-split` for commits, `git-pr` for PRs, `git-issue` for GitHub issues, and `write` for all other text people read.
