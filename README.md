@@ -23,6 +23,12 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [write](write/) | Write and rewrite prose without AI tells: judge, rewrite, and flag against a rubric without changing meaning |
 | [ghostvm](ghostvm/) | Run commands and drive apps inside a macOS VM with GhostVM (`vmctl`) and agent-desktop |
 
+## Why ghostvm
+
+Agents that test GUI apps or browse the web on your Mac take over your desktop, steal focus, and can touch your real data. A macOS guest VM from [GhostVM](https://github.com/groundwater/GhostVM) isolates all of that, and [agent-desktop](https://github.com/vercel-labs/agent-desktop) lets the agent read and click the guest's apps through accessibility instead of screenshots.
+
+Agents new to this setup lose time on the same problems: commands that fail without absolute paths, empty replies that break parsers, password dialogs that block an app unseen, and the wrong VM tool. This skill writes the working commands and the fixes down, so a fresh agent gets it right the first time. It came from reading real agent sessions that used GhostVM.
+
 ## Install
 
 ```bash
