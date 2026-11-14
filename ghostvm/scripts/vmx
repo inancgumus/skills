@@ -1,0 +1,35 @@
+#!/bin/sh
+# vmx: run one program in a GhostVM guest; print its stdout/stderr; exit with its exit code.
+#   vmx [-n VM] <abs-path-to-program> [args...]     run a program
+#   vmx [-n VM] sh '<shell line>'                   run a shell line (/bin/sh -c)
+#   vmx [-n VM] pull <guest-file> <host-file>       copy a guest file out (any size, chunked, resumable by rerun)
+# VM name: -n, else $VM, else the only VM `vmctl list` shows (name = bundle basename without .GhostVM).
+# Retries "Empty response" / 500 up to 3 times. Needs jq.
+vm="${VM:-}"
+[ "$1" = "-n" ] && { vm="$2"; shift 2; }
+if [ -z "$vm" ]; then
+  vm=$(vmctl list | awk '{print $1}' | sed 's#.*/##; s#\.GhostVM$##')
+  [ "$(printf '%s\n' "$vm" | wc -l)" -eq 1 ] && [ -n "$vm" ] || { echo "vmx: pick a VM with -n or \$VM. Found: $vm" >&2; exit 2; }
+fi
+raw() { # run exec with retries; echo JSON on success
+  i=0
+  while [ $i -lt 3 ]; do
+    out=$(vmctl remote --name "$vm" --json exec "$@" 2>&1) && printf '%s' "$out" | jq -e . >/dev/null 2>&1 && { printf '%s' "$out"; return 0; }
+    i=$((i+1)); sleep 1
+  done
+  echo "vmx: guest gave no valid reply after 3 tries: $out" >&2; return 99
+}
+show() { printf '%s' "$1" | jq -j ".stdout // empty" ; printf '%s' "$1" | jq -j ".stderr // empty" >&2; return $(printf '%s' "$1" | jq -r '.exitCode // 0'); }
+if [ "$1" = "pull" ]; then
+  g="$2"; h="$3"; : > "$h.b64"
+  size=$("$0" -n "$vm" sh "/usr/bin/base64 -i '$g' | /usr/bin/tr -d '\n' | /usr/bin/wc -c" | tr -d ' ') || exit 1
+  off=0
+  while [ "$off" -lt "$size" ]; do
+    part=$("$0" -n "$vm" sh "/usr/bin/base64 -i '$g' | /usr/bin/tr -d '\n' | /usr/bin/cut -c $((off+1))-$((off+30000))") || exit 1
+    printf '%s' "$part" >> "$h.b64"; off=$((off+30000))
+  done
+  base64 -d -i "$h.b64" -o "$h" && rm "$h.b64" && echo "saved $h"; exit $?
+fi
+if [ "$1" = "sh" ]; then shift; res=$(raw /bin/sh -c "$1") || exit $?
+else res=$(raw "$@") || exit $?; fi
+show "$res"

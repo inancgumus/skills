@@ -21,6 +21,7 @@ Agent skills for the [open agent skills ecosystem](https://agentskills.io).
 | [claude-sessions](claude-sessions/) | List recent Claude Code sessions and resume them in new iTerm tabs |
 | [writing-style](writing-style/) | Write prose like an experienced engineer talking to another engineer |
 | [write](write/) | Write and rewrite prose without AI tells: judge, rewrite, and flag against a rubric without changing meaning |
+| [ghostvm](ghostvm/) | Run commands and drive apps inside a macOS VM with GhostVM (`vmctl`) and agent-desktop |
 
 ## Install
 
@@ -89,3 +90,8 @@ The script is idempotent — run it after cloning on a new machine, or after add
 **claude-sessions**
 - macOS with iTerm2 (new tabs are created through AppleScript)
 - `python3`
+
+**ghostvm**
+- [GhostVM](https://github.com/groundwater/GhostVM) with a running macOS guest (`vmctl` on `PATH`)
+- `jq`
+- [agent-desktop](https://github.com/vercel-labs/agent-desktop) in the guest (only for UI driving)
