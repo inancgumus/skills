@@ -181,7 +181,10 @@ A spinner or a video in the window also counts as a change, so every action then
 
 One build, copy, and launch round costs minutes. Work out the visual or logic change without the VM first (an offscreen render, a unit test, a scratch copy of the code), then use the VM once to confirm.
 
-1. Build and package the `.app` on the host, and never launch it on the host. The guest has no Xcode and no Apple Intelligence model.
+1. Build and package the `.app` on the host, and never launch it on the host. The guest has no Xcode and no Apple Intelligence model. Build it the fast way:
+   * Build the debug configuration for the VM (`swift build`, or `xcodebuild -configuration Debug`). It looks the same on screen and builds several times faster than release. Build release only to measure speed, and never measure speed in the VM.
+   * While you work, run only the tests for the code you changed (`swift test --filter <Name>`). Run the whole test suite once, at the end.
+   * When several agents share one Mac, run every build and test through one shared lock (`/usr/bin/lockf -t 600 /tmp/<project>-build.lock <command>`), so they take turns instead of slowing each other down.
 2. In one job, copy any data file the app reads, install and launch the app (about 4 s), and film or `shot` it, using the name `app` printed:
 
 ```sh
