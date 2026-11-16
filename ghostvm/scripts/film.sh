@@ -25,6 +25,10 @@ while :; do
   esac
 done
 [ -n "$app" ] && [ -n "$out" ] && [ $# -gt 0 ] || { echo "usage: vmx film <app> <out.mov> [--rect x,y,w,h] [--1x] [--tail MS] <click NAME | xy X,Y | key NAME>..." >&2; exit 2; }
+# Time budget: each action gets 40 s (lookup, click, up to 30 s of settling). The film fails at the budget instead of
+# running into an agent's 10 min command limit.
+budget=$(( 20 + $# * 40 + tail / 1000 ))
+[ $budget -le 540 ] || { echo "film: too many actions ($#). Split them into films of 12 or fewer." >&2; exit 2; }
 case "$out" in *.mov) ;; *.mp4) opts="$opts --codec hevc --mbps 0";; *) echo "film: the output must end in .mov or .mp4" >&2; exit 2;; esac   # ProRes cannot go in an mp4
 here=$(cd "$(dirname "$0")" && pwd)
 vmx="$here/vmx"
@@ -79,7 +83,7 @@ printf '%s' \"\$ELS\" | /usr/bin/jq -r --arg n \"\$2\" '(\$n | ascii_downcase) a
 fail() { echo \"\$1\"; /bin/cat \$G/log; /usr/bin/pkill -f film-$hash; echo failed > \$G/status; exit 1; }
 /bin/rm -f \$G/stop \$G/log \$G/status \$G/out.$ext \$G/times \$T
 \$A focus-window --app $(q "$app") > /dev/null 2>&1; /bin/sleep 0.3   # bring the app to the front, so the film and the clicks hit it
-(\$G/film-$hash \$G/out.$ext 600 --app $(q "$app") $opts --stop \$G/stop --tick \$T > \$G/log 2>&1 &)
+(\$G/film-$hash \$G/out.$ext $budget --app $(q "$app") $opts --stop \$G/stop --tick \$T > \$G/log 2>&1 &)
 i=0; while ! /usr/bin/grep -q '^recording' \$G/log 2>/dev/null; do
   /usr/bin/grep -q '^film:' \$G/log 2>/dev/null && fail 'film: the recorder failed:'
   i=\$((i+1)); [ \$i -gt 200 ] && fail 'film: the recorder did not start in 10 s:'
@@ -103,7 +107,11 @@ waited=0
 while :; do
   st=$("$vmx" -n "$vm" sh "/bin/cat $G/status 2>/dev/null; true") || exit $?
   [ -n "$st" ] && break
-  waited=$((waited + 1)); [ $waited -gt 1300 ] && { echo "film: no result after 650 s" >&2; exit 6; }
+  waited=$((waited + 1))
+  if [ $waited -gt $(( (budget + 15) * 2 )) ]; then
+    "$vmx" -n "$vm" sh "/usr/bin/pkill -f $G/run.sh; /usr/bin/pkill -f film-$hash; /bin/cat $G/run.log $G/log 2>/dev/null; true" >&2
+    echo "film: no result after $((budget + 15)) s, so it stopped the film in the guest. Take a shot and look." >&2; exit 6
+  fi
   sleep 0.5
 done
 "$vmx" -n "$vm" sh "/bin/cat $G/run.log; true"

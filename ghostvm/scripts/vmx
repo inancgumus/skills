@@ -8,6 +8,7 @@
 #   vmx [-n VM] ui <app> [text]                     on-screen interactive elements: role, name, click point, size (only names containing text)
 #   vmx [-n VM] click <app> <name> [role]           click the one on-screen element with that exact name
 #   vmx [-n VM] clickxy <x> <y>                     physical click at guest screen point (guest must be yours alone)
+#   vmx [-n VM] app <host.app> [--fresh] [--before LINE] [-- args]   install the app at /tmp/vmx-app, relaunch it, wait for its window
 #   vmx [-n VM] film <app> <out.mov> <action>...    record the app window at 60 fps, 2x, while actions run (click NAME | xy X,Y | key NAME)
 #   vmx [-n VM] shot <host-file.png>                screenshot: <file> at the screen's size in points, plus <file>@2x.png at full pixels
 # VM name: -n, else $VM, else the only VM `vmctl list` shows (name = bundle basename without .GhostVM).
@@ -104,6 +105,42 @@ exit 13' _ "$2" "$3" "$4") || { echo "vmx: no reply from the guest. The click ma
 clickxy)
   case "$2$3" in ''|*[!0-9]*) echo "usage: vmx clickxy <x> <y> (whole numbers)" >&2; exit 2;; esac
   res=$(TRIES=1 raw /bin/sh -c '$HOME/.local/bin/agent-desktop --headed mouse-click --xy "$1,$2" | /usr/bin/jq -r "if .ok then \"clicked at \($1),\($2)\" else .error.code + \": \" + .error.message end"' _ "$2" "$3") || { echo "vmx: no reply from the guest. The click may have been sent. Do not repeat it. Run vmx shot and look." >&2; exit 14; }; show "$res"; exit $?;;
+app)
+  # Copy a host .app into the guest at one fixed path, quit the old copy, launch the new one, and wait for its window.
+  shift; src="${1%/}"; shift
+  fresh=""; before=""
+  while :; do case "$1" in --fresh) fresh=1; shift;; --before) before="$2"; shift 2;; --) shift; break;; *) break;; esac; done
+  [ -f "$src/Contents/Info.plist" ] || { echo "usage: vmx app <host.app> [--fresh] [--before '<guest shell line>'] [-- launch args...]" >&2; exit 2; }
+  have_ssh || { echo "vmx: app needs ssh to the guest (Host $sshh)." >&2; exit 1; }
+  base=$(basename "$src"); exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$src/Contents/Info.plist")
+  id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$src/Contents/Info.plist")
+  [ -n "$exe" ] && [ -n "$id" ] || { echo "vmx: $src has no CFBundleExecutable or CFBundleIdentifier" >&2; exit 2; }
+  G=/tmp/vmx-app; P="$G/$base"
+  # 1. Quit the old copy (from the GUI session, where it runs) and wait until it is gone.
+  res=$(raw /bin/sh -c '/usr/bin/pkill -x "$1"; i=0; while /usr/bin/pgrep -x "$1" >/dev/null; do i=$((i+1)); [ $i -gt 50 ] && /usr/bin/pkill -9 -x "$1"; [ $i -gt 100 ] && { echo "the old $1 does not quit"; exit 1; }; /bin/sleep 0.05; done' _ "$exe") || exit $?
+  show "$res" || exit 1
+  # 2. Copy it over ssh as one tar stream; extended attributes stay on the host.
+  COPYFILE_DISABLE=1 tar --no-mac-metadata -C "$(dirname "$src")" -cf - "$base" \
+    | gssh "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u '$P' 2>/dev/null; /bin/rm -rf '$P' && /bin/mkdir -p $G && /usr/bin/tar -C $G -xf -" || { echo "vmx: copying $base into the guest failed" >&2; exit 1; }
+  if codesign --verify --deep --strict "$src" 2>/dev/null; then
+    gssh "/usr/bin/codesign --verify --deep --strict '$P'" || { echo "vmx: the guest copy of $base fails codesign --verify" >&2; exit 1; }
+  fi
+  # 3. A fresh start: delete the app's saved data and settings. Then the --before line (settings, files).
+  if [ -n "$fresh" ]; then
+    res=$(raw /bin/sh -c 'L=$HOME/Library; /bin/rm -rf "$L/Application Support/$1" "$L/Containers/$1" "$L/Caches/$1" "$L/Saved Application State/$1.savedState" "$L/HTTPStorages/$1"; /usr/bin/defaults delete "$1" >/dev/null 2>&1; true' _ "$id") || exit $?
+  fi
+  if [ -n "$before" ]; then res=$(raw /bin/sh -c "$before") || exit $?; show "$res" || { echo "vmx: the --before line failed" >&2; exit 1; }; fi
+  # 4. Launch with the arguments, logs to <app>.log, and wait up to 20 s for a window of that process.
+  res=$(raw /bin/sh -c 'P=$1; shift; /bin/rm -f "$P.log"; /usr/bin/open -n --stdout "$P.log" --stderr "$P.log" "$P" --args "$@" || exit 1
+i=0; while :; do
+  pid=$(/usr/bin/pgrep -nx "'"$exe"'")
+  [ -n "$pid" ] && W=$($HOME/.local/bin/agent-desktop list-windows | /usr/bin/jq -r --argjson p "$pid" "[.data[] | select(.pid == \$p and .visible and .bounds.width >= 100 and .bounds.height >= 100)][0] | select(.) | \"\(.app_name)\t\(.bounds.width|floor)x\(.bounds.height|floor)\"") && [ -n "$W" ] && break
+  i=$((i+1)); [ $i -gt 100 ] && { echo "no window after 20 s. Log: $P.log"; /usr/bin/tail -5 "$P.log"; exit 1; }
+  /bin/sleep 0.2; done
+printf "%s\n" "$W"' _ "$P" "$@") || exit $?
+  out=$(show "$res") || { printf '%s\n' "$out" >&2; exit 1; }
+  name=$(printf '%s' "$out" | cut -f1); size=$(printf '%s' "$out" | cut -f2)
+  echo "running \"$name\" ($size window) from $P. Use \"$name\" as <app> in ui, click, and film. Log: $P.log"; exit 0;;
 film)
   shift; LIST="$LIST" exec /bin/sh "$(dirname "$0")/film.sh" "$vm" "$@";;
 shot)
