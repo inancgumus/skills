@@ -30,11 +30,13 @@ Set `S=<this skill's dir>/scripts/vmx` (needs `jq` on the host). Pass `-n <VM>` 
 | `$S click <app> <name> [role]` | Finds the one on-screen element with that exact name and clicks it, all in one call. Prints the click point. |
 | `$S clickxy <x> <y>` | Physical click at a guest screen point. Takes guest focus, so use it only when you hold the guest alone. Whatever is on top at that point gets the click, so take a screenshot first. |
 | `$S shot <file.png>` | Screenshot of the whole guest screen in under 1 s. Saves two files on the host: `<file>.png` at the display's size in points, where a pixel is a click point for `clickxy` and a corner for `film --rect` (read this one), and `<file>@2x.png` at full Retina pixels (for people, and for checking fine detail in a small crop). |
-| `$S app <host.app> [--fresh] [--before '<line>'] [-- args...]` | Needs ssh. Copies the app into the guest at `/tmp/vmx-app/<name>.app` (the same path every time), quits the copy already running the way a person does (Cmd-Q, forced after 5 s) and clears its saved windows, so macOS never shows a *reopen windows?* dialog after a crash, launches the new one with the arguments, waits for its window, and prints the app name to use with `ui`, `click`, and `film`. `--fresh` first deletes the app's saved data and settings. `--before` runs a guest shell line just before launch, such as `defaults write`. Its output goes to `/tmp/vmx-app/<name>.app.log`. Takes about 3 s. |
-| `$S quit <host.app or executable>` | Quits the app cleanly (Cmd-Q, forced after 5 s). Never stop an app with `kill -9`: a crash makes macOS ask about it at the next launch. |
+| `$S app <host.app> [--fresh] [--before '<line>'] [-- args...]` | Needs ssh. Copies the app into the guest at `/tmp/vmx-app/<name>.app` (the same path every time), quits the copy already running the way a person does (Cmd-Q, forced after 5 s) and clears its saved windows, so macOS never shows a *reopen windows?* dialog after a crash, launches the new one with the arguments, waits for its window, and prints the app name to use with `ui`, `click`, and `film`. `--fresh` first deletes the app's saved data and settings. `--before` runs a guest shell line just before launch, such as `defaults write`. Its output goes to `/tmp/vmx-app/<name>.app.log`. Takes about 4 s. |
+| `$S quit <host.app or executable>` | Quits the app cleanly (Cmd-Q, forced after 5 s; an app with no Quit menu item is stopped after 1 s). Never stop an app with `kill -9`: a crash makes macOS ask about it at the next launch. |
 | `$S job '<lines>'` | Runs several `$S` calls as one, holding the guest until they end (see *Share the guest*). |
 | `$S lease` | Keeps the guest for you across calls, for looking before you decide. Prints a token to put before each call (see *Share the guest*). |
-| `$S film <app> <out.mov> [--rect x,y,w,h] [--hevc] [--1x] [--tail MS] <action>...` | Needs ssh to the guest. Records the app's window at 60 fps and full Retina pixels while the actions run, as ProRes 4444, which matches a Retina screenshot exactly (about 30 MB per second of motion; `--hevc` makes it about 100 times smaller and slightly soft), and saves the film on the host plus `<out>.times.txt`. Quote each action as one argument (`"click Add to Favorites"`). Actions: `click NAME` (real click on the element with that exact name, else on the one whose name contains NAME, such as part of a list row's title; looked up when the action runs), `xy X,Y` (real click at a point), and `key NAME`. After each action it waits until the picture changes and then stays still for 0.3 s, so nothing sleeps for a guessed time. Every changed pixel counts, even a 1 pt wobble. Before recording, `film` brings the app to the front. Recording starts just before the first action and stops `--tail` ms (default 300) after the last one settles. `--rect` records only that part of the screen, in guest screen points read off a `shot`. It also saves the last frame at full pixels next to it (`star.mov` gets `star.mov.png`). A 4 s film takes about 9 to 12 s in total. A stuck film stops itself after 40 s per action (12 actions at most) and says so, so it never runs into a 10 min command limit. An `.mp4` name gives an HEVC mp4, because ProRes can't go in an mp4. |
+| `$S film <app> <out.mov or .mp4 or .png> [--rect x,y,w,h] [--hevc] [--1x] [--tail MS] <action>...` | Needs ssh to the guest. Records the app's window at 60 fps and full Retina pixels while the actions run, as ProRes 4444, which matches a Retina screenshot exactly (about 30 MB per second of motion; `--hevc` makes it about 100 times smaller and slightly soft), and saves the film on the host plus `<out>.times.txt`. Quote each action as one argument (`"click Add to Favorites"`). Actions: `click NAME` (real click on the element with that exact name, else on the one whose name contains NAME, such as part of a list row's title; looked up when the action runs), `xy X,Y` (real click at a point), and `key NAME`. After each action it waits until the picture changes and then stays still for 0.3 s, so nothing sleeps for a guessed time. Every changed pixel counts, even a 1 pt wobble. Before recording, `film` brings the app to the front. Recording starts just before the first action and stops `--tail` ms (default 300) after the last one settles. `--rect` records only that part of the screen, in guest screen points read off a `shot`. It also saves the last frame at full pixels next to it (`star.mov` gets `star.mov.png`), and `<out>.area`, the recorded part of the screen in points, which `frames` and `pixels` read. With a `.png` name it keeps no film: it runs the actions, waits for each to settle, then takes a `shot` (`<out>.png` in points, where a pixel is a click point, plus `<out>@2x.png`). That's how to click several times and look, with no guessed sleeps. A film takes about 5 s more than its own length. A stuck film stops itself after 40 s per action (12 actions at most) and says so, so it never runs into a 10 min command limit. An `.mp4` name gives an HEVC mp4, because ProRes can't go in an mp4. |
+| `$S frames <film> [--from MS] [--to MS] [--rect x,y,w,h] [--out sheet.png]` | Host only, never waits for the guest. One contact sheet of the film's real frames between those film times (from the times file), each labeled with its time in ms. `--rect` is in screen points, like a `shot` pixel. At most 24 frames; with more it picks evenly and says so. Prints the times of the frames it shows. |
+| `$S pixels <film> X,Y [X,Y...] [--from MS] [--to MS] [--all]` | Host only. Each screen point's color (`#rrggbb`) by film time, one row per change. Use it to prove a flash, a fade, or a color without reading images. Within 1 of a `shot` in a `.mov`; in an `.mp4`, a few values off on flat areas and more on text edges. |
 | `$S pull <guest-file> <host-file>` | Copies a guest file to the host and checks an md5 checksum. Takes about a second over ssh. Without ssh it takes about a minute per MB, so keep files small. |
 | `$S push <host-file> <guest-file>` | Copies a host file into the guest over ssh and checks an md5 checksum. Fails when ssh isn't set up. |
 | `$S sh '<line>'` | Runs a shell line in the guest's GUI session. Pipes, `&&`, and `$VAR` work. Long commands and large output are fine. |
@@ -55,7 +57,7 @@ Exit codes for every command:
 
 | Code | Meaning | Do |
 |---|---|---|
-| 2 | Wrong use: `click`, `clickxy`, or `film` ran alone, or a job ran something other than `$S` | Read the printed message and do what it says. |
+| 2 | Wrong use: `click`, `clickxy`, or `film` ran alone, or a job ran something other than `$S`, or slept in the guest | Read the printed message and do what it says. |
 | 75 | The guest was still busy after 90 s | Run the same call again as a background shell call and keep working. |
 | 76 | Your lease has ended | Take a new lease, or put the steps in one `$S job`. |
 
@@ -72,7 +74,11 @@ A job runs several calls as one and holds the guest until they end (at most 540 
 $S job '$S app ./MyApp.app --fresh -- <args> && $S click "My App" Settings && $S film "My App" /tmp/a.mov "click Dark"'
 ```
 
-A job may only run `$S` commands (`| grep` and `| head` may filter them). Build, package, and wait on the host before it, never inside.
+A job may only run `$S` commands (`| grep` and `| head` may filter them), and may not sleep in the guest (`$S sh 'sleep 2'`). Build, package, and wait on the host before it, never inside. To click several times and then look, use one `film` to a `.png`: it waits until each click settles, then takes a `shot`.
+
+```sh
+$S job '$S app ./MyApp.app --fresh -- <args> && $S film "My App" /tmp/look.png "xy 362,451" "xy 627,199" "key escape"'   # then read /tmp/look.png
+```
 
 A lease keeps the guest for you across calls, so you can look at a screenshot before you decide the next click. Use it only for that, because everyone else waits meanwhile:
 
@@ -141,15 +147,16 @@ $S job '$S app ./MyApp.app --fresh -- <args> && $S ui "My App" favor && $S film 
 
 `film` prints the times file. Each line says whether that action changed the picture, so it is the check: don't run `ui`, `shot`, or `apps` afterward. Read the last frame (`star.mov.png`, made when `ffmpeg` is on the host) only if you need to see the end state. Take no screenshots before the film either. Use `click <part of a row title>` to open a list row first. Some elements have no name (an app may leave a selected row unnamed); click those with `xy X,Y` from `ui`.
 
-To check motion frame by frame, split the film on the host:
+`click NAME` costs 1 to 5 s per lookup in a big app, so `film` prints the point it found: use `xy X,Y` with that point in the next film while the window stays the same.
+
+To check motion frame by frame, don't write ffmpeg or pixel scripts. Use these on the host, with the times from the times file:
 
 ```sh
-mkdir -p /tmp/star && ffmpeg -v error -ss 1.6 -to 2.4 -i /tmp/star.mov -vf fps=60 /tmp/star/%04d.png   # one Retina PNG per 1/60 s
+$S frames /tmp/star.mov --from 2004 --to 2640 --rect 300,80,200,60   # one sheet of the real frames, each labeled with its time; read it
+$S pixels /tmp/star.mov 362,451 400,90 --from 2004 --to 2640         # each point's color at every change, as text
 ```
 
-Take `-ss` and `-to` (seconds) from the action's *first change* and *last change* in the times file. Frame `n` is then at `-ss + (n-1) × 16.7` ms of film time. Splitting the whole film instead takes several seconds per second of film.
-
-Each line of `<out>.times.txt` reads like `1901 ms: click Star | first change 2004 ms, last change 2640 ms`, all in film time. Inside the `.mov`, a frame is stored only when pixels change (16.7 ms apart while something moves); the `fps=60` split above fills the still parts with repeats.
+Each line of `<out>.times.txt` reads like `1901 ms: click Star | first change 2004 ms, last change 2640 ms`, all in film time. A film stores a frame only when pixels change (16.7 ms apart while something moves), so judge timing by these times, never by counting frames or splitting with `fps=60`.
 
 Read the times file after every film:
 
@@ -175,7 +182,7 @@ A spinner or a video in the window also counts as a change, so every action then
 One build, copy, and launch round costs minutes. Work out the visual or logic change without the VM first (an offscreen render, a unit test, a scratch copy of the code), then use the VM once to confirm.
 
 1. Build and package the `.app` on the host, and never launch it on the host. The guest has no Xcode and no Apple Intelligence model.
-2. In one job, copy any data file the app reads, install and launch the app (about 3 s), and film or `shot` it, using the name `app` printed:
+2. In one job, copy any data file the app reads, install and launch the app (about 4 s), and film or `shot` it, using the name `app` printed:
 
 ```sh
 $S job '$S push ./tape.zlib /tmp/tape.zlib && $S app ./build/MyApp.app --fresh --before "/usr/bin/defaults write <bundle-id> key -string value" -- --my-flag /tmp/tape.zlib && $S film "My App" /tmp/a.mov "click Star"'

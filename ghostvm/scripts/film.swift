@@ -151,7 +151,8 @@ Task { @MainActor in
             output.onStart = { c.resume() }
             stream.startCapture { error in if let error { output.onStart = nil; c.resume(throwing: error) } }
         }
-        print("recording \(now()) \(config.width)x\(config.height)"); fflush(stdout)
+        // The recorded area in screen points, so frames and pixels can take screen points too.
+        print("recording \(now()) \(config.width)x\(config.height) \(Int(area.minX)),\(Int(area.minY)),\(Int(area.width)),\(Int(area.height))"); fflush(stdout)
         let deadline = Date().addingTimeInterval(limit)
         while !stopped && Date() < deadline && !(stop.map { FileManager.default.fileExists(atPath: $0) } ?? false) {
             try await Task.sleep(for: .milliseconds(10))

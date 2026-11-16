@@ -1,6 +1,9 @@
 #!/bin/sh
-# Run through: vmx film <app> <out.mov> [--rect x,y,w,h] [--1x] [--tail MS] <action>...
-# Records the app's window at 60 fps (2x pixels, HEVC) while the actions run, then copies the one file to the host.
+# Run through: vmx film <app> <out.mov|out.mp4|out.png> [--rect x,y,w,h] [--1x] [--tail MS] <action>...
+# Records the app's window at 60 fps (2x pixels; ProRes in .mov, HEVC in .mp4) while the actions run, then copies the
+# one file to the host. Also writes <out>.area: the recorded area in screen points (x,y,w,h), for vmx frames and pixels.
+# With out.png it keeps no film: it runs the actions, waits for each to settle, then takes a vmx shot (out.png in
+# points, where a pixel is a click point, plus out@2x.png).
 # Actions:  click NAME real click on the element with that exact name, else the one whose name contains it (looked up when it runs)
 #           xy X,Y     real click at a guest screen point (a `shot` pixel)
 #           key NAME   press a key in the app (return, escape, cmd+z ...)
@@ -29,14 +32,16 @@ done
 # running into an agent's 10 min command limit.
 budget=$(( 20 + $# * 40 + tail / 1000 ))
 [ $budget -le 540 ] || { echo "film: too many actions ($#). Split them into films of 12 or fewer." >&2; exit 2; }
-case "$out" in *.mov) ;; *.mp4) opts="$opts --codec hevc --mbps 0";; *) echo "film: the output must end in .mov or .mp4" >&2; exit 2;; esac   # ProRes cannot go in an mp4
+case "$out" in *.mov) ;; *.mp4|*.png) opts="$opts --codec hevc --mbps 0";; *) echo "film: the output must end in .mov, .mp4, or .png" >&2; exit 2;; esac   # ProRes cannot go in an mp4
 here=$(cd "$(dirname "$0")" && pwd)
 vmx="$here/vmx"
 # The binary name holds a hash of the source and the build target. Built for macOS 14, so older guests run it too.
 target=arm64-apple-macos14
 hash=$( (cat "$here/film.swift"; echo "$target") | /sbin/md5 -q | cut -c1-12)
 G=/tmp/.vmx-film
-ext=${out##*.}
+ext=${out##*.}; look=""
+# A .png keeps no film: a small HEVC film runs in the guest only to see when each action settles.
+[ "$ext" = png ] && { ext=mp4; look=1; }
 
 # 1. The recorder: build it on the host once, copy it into the guest once.
 bin="${TMPDIR:-/tmp}/vmx-film-$hash"
@@ -58,7 +63,7 @@ steps=""
 for a in "$@"; do
   case "$a" in
     "click "*) steps="$steps
-p=\$(findpt $(q "$app") $(q "${a#click }")); case \$p in [0-9]*,[0-9]*) act $(q "$a") \$A --headed mouse-click --xy \$p;; *) miss $(q "$a") \"\$p\";; esac";;
+p=\$(findpt $(q "$app") $(q "${a#click }")); case \$p in [0-9]*,[0-9]*) act $(q "$a") \$A --headed mouse-click --xy \$p; printf 'film: \"%s\" is at %s. While the window stays the same, use xy %s instead: finding a name takes 1 to 5 s.\\n' $(q "${a#click }") \$p \$p;; *) miss $(q "$a") \"\$p\";; esac";;
     "xy "*) p=${a#xy }; case "$p" in *[!0-9,]*|'') echo "film: bad point \"$p\" (use xy X,Y)" >&2; exit 2;; esac
             steps="$steps
 act \"xy $p\" \$A --headed mouse-click --xy $p";;
@@ -116,12 +121,27 @@ while :; do
 done
 "$vmx" -n "$vm" sh "/bin/cat $G/run.log; true"
 [ "$st" = ok ] || exit 1
-"$vmx" -n "$vm" pull "$G/out.$ext" "$out" || exit $?
-"$vmx" -n "$vm" sh "/bin/cat $G/times 2>/dev/null; true" > "$out.times.txt"
-# The last frame at full pixels, so the result can be checked without a separate screenshot.
-if command -v ffmpeg >/dev/null; then
-  ffmpeg -v error -y -sseof -3 -i "$out" -fps_mode passthrough -update 1 "$out.png" && sips -s dpiWidth 144 -s dpiHeight 144 "$out.png" >/dev/null && last=" Last frame: $out.png."
-else last=" No last frame: ffmpeg is not on the host."; fi
+info=$("$vmx" -n "$vm" sh "/usr/bin/awk '/^recording/{print \$4; exit}' $G/log; /bin/cat $G/times 2>/dev/null; true")
+printf '%s\n' "$info" | sed 1d > "$out.times.txt"
+area=$(printf '%s\n' "$info" | sed -n 1p)
+if [ -n "$look" ]; then
+  # out.png: the screen once everything settled, as a normal shot.
+  "$vmx" -n "$vm" shot "$out" || exit $?
+  echo "What each action did (also in $out.times.txt):"; cat "$out.times.txt"; exit 0
+fi
+"$vmx" -n "$vm" pull "$G/out.$ext" "$out" >/dev/null || exit $?
+# The last frame at full pixels, so the result can be checked without a separate screenshot. Seeking straight to the
+# last frame's time takes under a second; decoding the last 3 s took about 5.
+lastframe() {
+  command -v ffmpeg >/dev/null || return 1
+  rm -f "$2"
+  lp=$(ffprobe -v error -select_streams v:0 -show_entries packet=pts_time -of csv=p=0 "$1" 2>/dev/null | sort -n | tail -1)
+  [ -n "$lp" ] && ffmpeg -v error -y -ss "$lp" -i "$1" -frames:v 1 "$2" 2>/dev/null
+  [ -s "$2" ] || ffmpeg -v error -y -sseof -3 -i "$1" -fps_mode passthrough -update 1 "$2" || return 1
+  sips -s dpiWidth 144 -s dpiHeight 144 "$2" >/dev/null
+}
+printf '%s\n' "$area" > "$out.area"
+if lastframe "$out" "$out.png"; then last=" Last frame: $out.png."; else last=" No last frame: ffmpeg is not on the host."; fi
 frames=$(ffprobe -v error -select_streams v:0 -count_packets -show_entries stream=nb_read_packets,width,height -of csv=p=0 "$out" 2>/dev/null)
-echo "film: $out ($frames: width,height,frames).$last What each action did (also in $out.times.txt):"
+echo "film: $out ($frames: width,height,frames), area $area in screen points.$last What each action did (also in $out.times.txt):"
 cat "$out.times.txt"

@@ -11,14 +11,18 @@
 #   vmx [-n VM] click <app> <name> [role]           click the one on-screen element with that exact name
 #   vmx [-n VM] clickxy <x> <y>                     physical click at guest screen point (guest must be yours alone)
 #   vmx [-n VM] app <host.app> [--fresh] [--before LINE] [-- args]   install the app at /tmp/vmx-app, relaunch it, wait for its window
-#   vmx [-n VM] quit <host.app | executable>      quit an app cleanly (Cmd-Q, forced after 5 s)
-#   vmx [-n VM] film <app> <out.mov> <action>...    record the app window at 60 fps, 2x, while actions run (click NAME | xy X,Y | key NAME)
+#   vmx [-n VM] quit <host.app | executable>      quit an app cleanly (Cmd-Q, forced after 5 s, or after 1 s with no Quit menu item)
+#   vmx [-n VM] film <app> <out.mov|.mp4|.png> <action>...   record the app window at 60 fps, 2x, while actions run (click NAME | xy X,Y | key NAME); .png keeps only the last frame
+#   vmx frames <film> [--from MS] [--to MS] [--rect x,y,w,h]   one contact sheet of the film's real frames, each labeled with its time (host only)
+#   vmx pixels <film> X,Y [X,Y...] [--from MS] [--to MS]       each point's color in every frame of the film, as a table (host only)
 #   vmx [-n VM] shot <host-file.png>                screenshot: <file> at the screen's size in points, plus <file>@2x.png at full pixels
 # VM name: -n, else $VM, else the only VM `vmctl list` shows (name = bundle basename without .GhostVM).
 # With ssh to the guest, commands go through vmxd (see vmxd.pl): no GhostTools 30 s hangs, nothing runs twice. Without ssh, vmx retries
 # empty replies up to 3 times (click and clickxy never retry). Needs jq on the host.
 vm="${VM:-}"
 [ "$1" = "-n" ] && { vm="$2"; shift 2; }
+# frames and pixels read a film on the host, so they never wait for the guest.
+case "$1" in frames|pixels) c=$1; shift; exec /usr/bin/perl "$(cd "$(dirname "$0")" && pwd)/$c.pl" "$@";; esac
 if [ -z "$vm" ]; then
   vm=$(vmctl list | awk '{print $1}' | sed 's#.*/##; s#\.GhostVM$##')
   [ "$(printf '%s\n' "$vm" | wc -l)" -eq 1 ] && [ -n "$vm" ] || { echo "vmx: pick a VM with -n or \$VM. Found: $vm" >&2; exit 2; }
@@ -74,7 +78,7 @@ GA='$HOME/.local/bin/agent-desktop'
 # One guest script builds the list of usable elements: on screen, at least 4x4, inside the display.
 LIST='A=$HOME/.local/bin/agent-desktop
 D=$($A list-displays | /usr/bin/jq -c ".data[0].bounds")
-SNAP=$($A snapshot --app "$1" -i --compact --include-bounds 2>&1)
+SNAP=$($A snapshot --app "$1" -i --compact --include-bounds --timeout-ms 8000 2>&1)
 printf "%s" "$SNAP" | /usr/bin/jq -e ".ok == true" >/dev/null 2>&1 || { echo "ERROR: cannot read $1: $(printf "%s" "$SNAP" | /usr/bin/jq -r ".error.code + \": \" + .error.message" 2>/dev/null || printf "%s" "$SNAP" | head -c 200)"; exit 10; }
 ELS=$(printf "%s" "$SNAP" | /usr/bin/jq -c --argjson d "$D" "[.data.tree | .. | objects | select(.ref_id? and .bounds? and .bounds.width >= 4 and .bounds.height >= 4 and (.bounds.x + .bounds.width) > 0 and (.bounds.y + .bounds.height) > 0 and .bounds.x < \$d.width and .bounds.y < \$d.height and ((.states // []) | index(\"offscreen\") | not)) | {ref: .ref_id, role, name: (.name // \"\"), x: (([.bounds.x, 0] | max) as \$l | ([.bounds.x + .bounds.width, \$d.width] | min) as \$r | (\$l + \$r) / 2 | floor), y: (([.bounds.y, 0] | max) as \$t | ([.bounds.y + .bounds.height, \$d.height] | min) as \$b | (\$t + \$b) / 2 | floor), w: (.bounds.width | floor), h: (.bounds.height | floor)}]")
 '
@@ -94,6 +98,8 @@ case "$1" in click|clickxy|film)
 esac
 # The guest lock (see hold.pl): callers go in the order they came, one at a time, and a lease keeps the guest for one
 # agent across calls. The lock is a kernel file lock on fd 9, so it ends with the call, even on a crash.
+# A job may run only $S calls, and no sleep in the guest (see jobcheck.pl). Checked before waiting for the guest.
+if [ "$1" = job ] && [ -n "$2" ]; then bad=$(/usr/bin/perl "$here/jobcheck.pl" "$2") || { echo "$bad" >&2; exit 2; }; fi
 VD="/tmp/vmx-$vm"
 held_here=""; inlease=""
 if [ -z "$VMX_HELD" ] && [ -n "$1" ]; then
@@ -114,6 +120,9 @@ if [ -n "$pid" ]; then
   n=$(T 5 $A list-apps 2>/dev/null | /usr/bin/jq -r --argjson p "$pid" "(.data.apps // [])[] | select(.pid == \$p) | .name")
   [ -n "$n" ] && T 5 $A press cmd+q --app "$n" --force >/dev/null 2>&1
   i=0; while /usr/bin/pgrep -x "$1" >/dev/null; do i=$((i+1))
+    # Still running after 1 s: an app with no Quit menu item ignores Cmd-Q, so stop it now instead of waiting 5 s.
+    [ $i = 20 ] && [ -n "$n" ] && T 5 $A snapshot --app "$n" --surface menubar 2>/dev/null | /usr/bin/jq -e ".ok == true and ([.. | objects | select(((.name? // \"\") | test(\"^Quit\")) or (.native_id?.value? == \"terminate:\"))] | length == 0)" >/dev/null 2>&1 && {
+      echo "vmx: $1 has no Quit menu item, so Cmd-Q cannot quit it. It was stopped." >&2; /usr/bin/pkill -x "$1"; i=101; }
     [ $i = 100 ] && { echo "vmx: $1 did not quit on Cmd-Q in 5 s (a dialog may be open), so it was stopped." >&2; /usr/bin/pkill -x "$1"; }
     [ $i = 140 ] && /usr/bin/pkill -9 -x "$1"
     [ $i -gt 200 ] && { echo "the old $1 does not quit"; exit 1; }
@@ -124,8 +133,6 @@ case "$1" in
 job)
   # vmx job '<host shell lines that use $S>': run several vmx calls as one, with the guest held for all of them.
   [ -n "$2" ] || { echo "usage: vmx job '<host shell lines that use \$S>'" >&2; exit 2; }
-  # Only $S calls may run while the guest is held: build, sleep, and wait before the job, never inside it.
-  bad=$(/usr/bin/perl "$here/jobcheck.pl" "$2") || { echo "vmx: a job may only run \$S commands (| grep and | head may filter them). Not allowed: $bad. Build, copy files, and wait on the host before the job." >&2; exit 2; }
   t1=$(date +%s)
   S="$here/vmx" VM="$vm" VMX_SCOPE=job /usr/bin/perl -e 'alarm shift; exec @ARGV' 540 /bin/sh -c "$2"; rc=$?
   [ $rc = 142 ] && echo "vmx: the job ran past 540 s and was stopped." >&2
