@@ -9,7 +9,7 @@ GhostVM runs a macOS guest on Apple's Virtualization framework. GUI tests and we
 
 Set `S=<this skill's dir>/scripts/vmx` (needs `jq` on the host). Pass `-n <VM>` or set `$VM` to pick a VM. With one VM listed, `vmx` finds it.
 
-`vmx` finds the VM and checks ssh by itself, so don't run `vmctl list` or `ssh` first. It is fast only with ssh to the guest (see *Setup*). Then every command takes about 0.2 s, a screenshot under 1 s, and files move at full speed. GhostTools `exec` sometimes hangs 30 s per call ([GhostVM issue #268](https://github.com/groundwater/GhostVM/issues/268)), so `vmx` uses it once to start a small helper (`scripts/vmxd.pl`) in the guest's GUI session and sends every command through that helper over ssh. Never call `vmctl remote exec` yourself. Run one `vmx` command per shell call, not long chains. Over ssh, each call stops after 600 s (`VMX_TIMEOUT`), so run longer jobs detached.
+`vmx` finds the VM and checks ssh by itself, so don't run `vmctl list` or `ssh` first. It is fast only with ssh to the guest (see *Setup*). Then every command takes about 0.2 s, a screenshot under 1 s, and files move at full speed. GhostTools `exec` sometimes hangs 30 s per call ([GhostVM issue #268](https://github.com/groundwater/GhostVM/issues/268)), so `vmx` uses it once to start a small helper (`scripts/vmxd.pl`) in the guest's GUI session and sends every command through that helper over ssh. Never call `vmctl remote exec` yourself. Run one `vmx` command per shell call, or several as one `$S job`. Over ssh, each call stops after 600 s (`VMX_TIMEOUT`), so run longer jobs detached.
 
 ## Never
 
@@ -18,7 +18,7 @@ Set `S=<this skill's dir>/scripts/vmx` (needs `jq` on the host). Pass `-n <VM>` 
 * Bring the VM window to the front, or click it with host computer-use tools.
 * Drive the guest UI with anything but `vmx` and agent-desktop.
 * Create a new key or keychain item for an app the guest already knows (see *Stuck dialogs*).
-* Share a guest. One agent per guest at a time. If the task or project has a lock for the guest, take it before any guest command, even a read-only one. Chain it with `&&` (`mkdir lock && run`), never `;`, so a failed lock stops everything. Release only a lock you hold: `mkdir lock && { run; rmdir lock; }`, never `...; rmdir lock`, which deletes another agent's lock when your `mkdir` failed. If the lock is held, wait in the background (see *Film an animation*), never in a foreground loop of `sleep`.
+* Take a project's own lock for the guest by hand, or wait for the guest in a foreground loop of `sleep`. `vmx` holds the guest for you (see *Share the guest*).
 * Put a password in a command argument. Anything that needs root needs the user's admin password, so ask the user.
 
 ## Commands
@@ -30,7 +30,9 @@ Set `S=<this skill's dir>/scripts/vmx` (needs `jq` on the host). Pass `-n <VM>` 
 | `$S click <app> <name> [role]` | Finds the one on-screen element with that exact name and clicks it, all in one call. Prints the click point. |
 | `$S clickxy <x> <y>` | Physical click at a guest screen point. Takes guest focus, so use it only when you hold the guest alone. Whatever is on top at that point gets the click, so take a screenshot first. |
 | `$S shot <file.png>` | Screenshot of the whole guest screen in under 1 s. Saves two files on the host: `<file>.png` at the display's size in points, where a pixel is a click point for `clickxy` and a corner for `film --rect` (read this one), and `<file>@2x.png` at full Retina pixels (for people, and for checking fine detail in a small crop). |
-| `$S app <host.app> [--fresh] [--before '<line>'] [-- args...]` | Needs ssh. Copies the app into the guest at `/tmp/vmx-app/<name>.app` (the same path every time), quits the copy already running, launches the new one with the arguments, waits for its window, and prints the app name to use with `ui`, `click`, and `film`. `--fresh` first deletes the app's saved data and settings. `--before` runs a guest shell line just before launch, such as `defaults write`. Its output goes to `/tmp/vmx-app/<name>.app.log`. Takes about 3 s. |
+| `$S app <host.app> [--fresh] [--before '<line>'] [-- args...]` | Needs ssh. Copies the app into the guest at `/tmp/vmx-app/<name>.app` (the same path every time), quits the copy already running the way a person does (Cmd-Q, forced after 5 s) and clears its saved windows, so macOS never shows a *reopen windows?* dialog after a crash, launches the new one with the arguments, waits for its window, and prints the app name to use with `ui`, `click`, and `film`. `--fresh` first deletes the app's saved data and settings. `--before` runs a guest shell line just before launch, such as `defaults write`. Its output goes to `/tmp/vmx-app/<name>.app.log`. Takes about 3 s. |
+| `$S quit <host.app or executable>` | Quits the app cleanly (Cmd-Q, forced after 5 s). Never stop an app with `kill -9`: a crash makes macOS ask about it at the next launch. |
+| `$S job '<lines>'` | Runs several `$S` calls as one, holding the guest until they end (see *Share the guest*). |
 | `$S film <app> <out.mov> [--rect x,y,w,h] [--hevc] [--1x] [--tail MS] <action>...` | Needs ssh to the guest. Records the app's window at 60 fps and full Retina pixels while the actions run, as ProRes 4444, which matches a Retina screenshot exactly (about 30 MB per second of motion; `--hevc` makes it about 100 times smaller and slightly soft), and saves the film on the host plus `<out>.times.txt`. Quote each action as one argument (`"click Add to Favorites"`). Actions: `click NAME` (real click on the element with that exact name, else on the one whose name contains NAME, such as part of a list row's title; looked up when the action runs), `xy X,Y` (real click at a point), and `key NAME`. After each action it waits until the picture changes and then stays still for 0.3 s, so nothing sleeps for a guessed time. Every changed pixel counts, even a 1 pt wobble. Before recording, `film` brings the app to the front. Recording starts just before the first action and stops `--tail` ms (default 300) after the last one settles. `--rect` records only that part of the screen, in guest screen points read off a `shot`. It also saves the last frame at full pixels next to it (`star.mov` gets `star.mov.png`). A 4 s film takes about 9 to 12 s in total. A stuck film stops itself after 40 s per action (12 actions at most) and says so, so it never runs into a 10 min command limit. An `.mp4` name gives an HEVC mp4, because ProRes can't go in an mp4. |
 | `$S pull <guest-file> <host-file>` | Copies a guest file to the host and checks an md5 checksum. Takes about a second over ssh. Without ssh it takes about a minute per MB, so keep files small. |
 | `$S push <host-file> <guest-file>` | Copies a host file into the guest over ssh and checks an md5 checksum. Fails when ssh isn't set up. |
@@ -48,12 +50,24 @@ Exit codes for `ui` and `click`:
 | 13 | The click failed | Read the printed message. If it says *may have worked*, do not repeat it. Run `shot` and look. |
 | 14 | No reply from the guest | The click may have been sent. Do not repeat it. Run `shot` and look. |
 
+## Share the guest
+
+`vmx` holds the guest alone for each call, so two agents never drive it at once. You never take or release a lock. A call that finds the guest busy waits for it (up to 90 s) and says who has it. If it is still busy after that, `vmx` exits 75: run the same call again as a background shell call (Claude Code: `run_in_background`) and keep working.
+
+Between your calls, other agents may use the guest: they may quit or replace your app and change the screen. To do several things in a row, run them as one call with `$S job`, which holds the guest until its lines end (at most 540 s):
+
+```sh
+$S job '$S app ./MyApp.app --fresh -- <args> && $S film "My App" /tmp/a.mov "click Star"'
+```
+
+So every job starts from `$S app` and replays every click it needs. Never rely on what an earlier call left on screen. Build, package, and copy test data on the host before the job, not inside it.
+
 ## Take a screenshot
 
 One shell call, then read the file:
 
 ```sh
-mkdir <lock> && { $S shot /tmp/s.png; rmdir <lock>; }    # saves /tmp/s.png (1x) and /tmp/s@2x.png (Retina)
+$S shot /tmp/s.png    # saves /tmp/s.png (1x) and /tmp/s@2x.png (Retina)
 ```
 
 Read `/tmp/s.png`. Open `/tmp/s@2x.png` only to check fine detail, or to hand it to a person. Skip `apps`, `ui`, and any setup checks.
@@ -64,6 +78,8 @@ Read `/tmp/s.png`. Open `/tmp/s@2x.png` only to check fine detail, or to hand it
 2. `$S ui <app>`. Pick the target from the printed list.
 3. `$S click <app> "<name>"`. Never reuse a ref or a list from an earlier call. If `click` can't reach it, use `clickxy` with the point from `ui` or from the screenshot.
 4. `$S shot /tmp/after.png`, then read `/tmp/after.png`. A returned success only means the click was sent. Continue only when the screen shows the result.
+
+When other agents share the guest, steps 1 and 2 are one `$S job`, and steps 3 and 4 are the next, which starts with `$S app` and replays the clicks that led there.
 
 To film something, skip this loop and use one `film` call (see *Film an animation*).
 
@@ -92,14 +108,13 @@ Other actions, through `$S sh`:
 
 ## Film an animation
 
-Put every step in one `film` call: the clicks that set up the scene, the action you want to see, and the click that undoes it. A whole film task takes 2 shell calls. The lock carries your name, so the second call runs only while you hold it:
+Put every step in one `film` call: the clicks that set up the scene, the action you want to see, and the click that undoes it. A whole film task is one shell call:
 
 ```sh
-mkdir <lock> && echo <your-name> > <lock>/by && $S ui "<app>" favor    # 1. lock; the names show the starting state (Add to… = off)
-grep -qx <your-name> <lock>/by && { $S film "<app>" /tmp/star.mov "click Add to Favorites" "click Remove from Favorites"; rm -r <lock>; }   # 2.
+$S job '$S app ./MyApp.app --fresh -- <args> && $S ui "My App" favor && $S film "My App" /tmp/star.mov "click Add to Favorites" "click Remove from Favorites"'
 ```
 
-If call 1 fails at `mkdir`, the guest is busy. Wait for it in the background, never in a foreground loop: run `until mkdir <lock> 2>/dev/null; do sleep 5; done; echo <your-name> > <lock>/by` as a background shell call (Claude Code: `run_in_background`). Keep working, and when it ends you hold the lock, so run call 1 without its `mkdir` part. Hold the lock only for guest calls: never build, edit, or think through a problem while you hold it.
+`ui` with a filter prints the starting state in the same call (*Add to…* means off).
 
 `film` prints the times file. Each line says whether that action changed the picture, so it is the check: don't run `ui`, `shot`, or `apps` afterward. Read the last frame (`star.mov.png`, made when `ffmpeg` is on the host) only if you need to see the end state. Take no screenshots before the film either. Use `click <part of a row title>` to open a list row first. Some elements have no name (an app may leave a selected row unnamed); click those with `xy X,Y` from `ui`.
 
@@ -136,15 +151,12 @@ A spinner or a video in the window also counts as a change, so every action then
 
 One build, copy, and launch round costs minutes. Work out the visual or logic change without the VM first (an offscreen render, a unit test, a scratch copy of the code), then use the VM once to confirm.
 
-1. Build and package the `.app` on the host before you take the VM lock, and never launch it on the host. The guest has no Xcode and no Apple Intelligence model.
-2. Take the lock, then install and launch it in one call (about 3 s). Copy any data files it needs first with `push`:
+1. Build and package the `.app` on the host, and never launch it on the host. The guest has no Xcode and no Apple Intelligence model.
+2. In one job, copy any data file the app reads, install and launch the app (about 3 s), and film or `shot` it, using the name `app` printed:
 
 ```sh
-$S push ./tape.zlib /tmp/tape.zlib                       # only when the app reads a file
-$S app ./build/MyApp.app --fresh --before '/usr/bin/defaults write <bundle-id> key -string value' -- --my-flag /tmp/tape.zlib
+$S job '$S push ./tape.zlib /tmp/tape.zlib && $S app ./build/MyApp.app --fresh --before "/usr/bin/defaults write <bundle-id> key -string value" -- --my-flag /tmp/tape.zlib && $S film "My App" /tmp/a.mov "click Star"'
 ```
-
-3. Film or `shot` it, using the name `app` printed. Run `app` again to relaunch a new build.
 
 Also:
 

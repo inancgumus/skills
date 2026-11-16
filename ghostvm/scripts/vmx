@@ -4,11 +4,13 @@
 #   vmx [-n VM] sh '<shell line>'                   run a shell line (/bin/sh -c)
 #   vmx [-n VM] pull <guest-file> <host-file>       copy a guest file out (checksum-verified; over ssh if available, else slow chunks ~1 MB/min)
 #   vmx [-n VM] push <host-file> <guest-file>       copy a host file in (needs ssh to the guest)
+#   vmx [-n VM] job '<lines using $S>'            several vmx calls as one, holding the guest for all of them
 #   vmx [-n VM] apps                                names of running GUI apps (use these names with --app)
 #   vmx [-n VM] ui <app> [text]                     on-screen interactive elements: role, name, click point, size (only names containing text)
 #   vmx [-n VM] click <app> <name> [role]           click the one on-screen element with that exact name
 #   vmx [-n VM] clickxy <x> <y>                     physical click at guest screen point (guest must be yours alone)
 #   vmx [-n VM] app <host.app> [--fresh] [--before LINE] [-- args]   install the app at /tmp/vmx-app, relaunch it, wait for its window
+#   vmx [-n VM] quit <host.app | executable>      quit an app cleanly (Cmd-Q, forced after 5 s)
 #   vmx [-n VM] film <app> <out.mov> <action>...    record the app window at 60 fps, 2x, while actions run (click NAME | xy X,Y | key NAME)
 #   vmx [-n VM] shot <host-file.png>                screenshot: <file> at the screen's size in points, plus <file>@2x.png at full pixels
 # VM name: -n, else $VM, else the only VM `vmctl list` shows (name = bundle basename without .GhostVM).
@@ -25,7 +27,7 @@ sshh="${VMX_SSH:-ghostvm-$vm}"
 squote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 sopt="-o BatchMode=yes -o ConnectTimeout=3 -o ControlPath=/tmp/vmx-%C"
 # The shared connection starts on its own with no stdin/stdout, so it never holds a caller's output open.
-master() { ssh $sopt -O check "$sshh" 2>/dev/null || ssh $sopt -o ControlMaster=yes -o ControlPersist=600 -fN "$sshh" </dev/null >/dev/null 2>&1; }
+master() { ssh $sopt -O check "$sshh" 2>/dev/null || ssh $sopt -o ControlMaster=yes -o ControlPersist=600 -fN "$sshh" </dev/null >/dev/null 2>&1 9>&-; }
 # Every call has a hard limit (VMX_TIMEOUT seconds, default 600), so nothing can hang forever.
 # The guest's login shell may be zsh, so every remote command runs under /bin/sh.
 gssh() { /usr/bin/perl -e 'alarm shift; exec @ARGV' "${VMX_TIMEOUT:-600}" ssh $sopt -o ControlMaster=no "$sshh" "/bin/sh -c $(squote "$*")"; }
@@ -38,7 +40,7 @@ Q="/tmp/.vmx-q-$(/sbin/md5 -q "$here/vmxd.pl" | cut -c1-8)"
 waitfile() { printf "/usr/bin/perl -e '\$e = time + \$ARGV[1]; select undef, undef, undef, 0.005 until -e \$ARGV[0] or time > \$e; exit !-e \$ARGV[0]' %s %s" "$1" "${VMX_TIMEOUT:-600}"; }
 start_vmxd() {
   gssh "for p in /tmp/.vmx-q-*/pid; do [ -f \$p ] && /bin/kill \$(/bin/cat \$p) 2>/dev/null; /bin/rm -f \$p; done; /bin/mkdir -p $Q && /bin/cat > $Q/vmxd.pl" < "$here/vmxd.pl" || return 1
-  vmctl remote --name "$vm" --json exec /bin/sh -c "/usr/bin/nohup /usr/bin/perl $Q/vmxd.pl $Q > /dev/null 2>&1 & /bin/sleep 0.3" >/dev/null 2>&1 &
+  vmctl remote --name "$vm" --json exec /bin/sh -c "/usr/bin/nohup /usr/bin/perl $Q/vmxd.pl $Q > /dev/null 2>&1 & /bin/sleep 0.3" >/dev/null 2>&1 9>&- &
   cpid=$!
   gssh "i=0; until [ -f $Q/pid ] && /bin/kill -0 \$(/bin/cat $Q/pid) 2>/dev/null; do i=\$((i+1)); [ \$i -gt 1000 ] && exit 1; /bin/sleep 0.05; done"; rc=$?
   kill $cpid 2>/dev/null
@@ -51,7 +53,7 @@ raw() {
     line="exec"; for a in "$@"; do line="$line $(squote "$a")"; done
     for try in 1 2; do
       id="$$-$try-$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')"
-      res=$(printf '%s\n' "$line" | gssh "Q=$Q; [ -f \$Q/pid ] && /bin/kill -0 \$(/bin/cat \$Q/pid) 2>/dev/null || exit 98; /bin/cat > \$Q/$id.t && /bin/mv \$Q/$id.t \$Q/$id.cmd && $(waitfile "\$Q/$id.rc") && /usr/bin/jq -n --rawfile stdout \$Q/$id.out --rawfile stderr \$Q/$id.err --argjson exitCode \$(/bin/cat \$Q/$id.rc) '{\$stdout, \$stderr, \$exitCode}'; /bin/rm -f \$Q/$id.*")
+      res=$(printf '%s\n' "$line" | gssh "Q=$Q; [ -f \$Q/pid ] && /bin/kill -0 \$(/bin/cat \$Q/pid) 2>/dev/null || exit 98; /bin/cat > \$Q/$id.t && echo $(( ${VMX_TIMEOUT:-600} - 5 )) > \$Q/$id.limit && /bin/mv \$Q/$id.t \$Q/$id.cmd && $(waitfile "\$Q/$id.rc") && /usr/bin/jq -n --rawfile stdout \$Q/$id.out --rawfile stderr \$Q/$id.err --argjson exitCode \$(/bin/cat \$Q/$id.rc) '{\$stdout, \$stderr, \$exitCode}'; /bin/rm -f \$Q/$id.*")
       rc=$?
       [ $rc = 0 ] && { printf '%s' "$res"; return 0; }
       [ $rc = 98 ] && [ $try = 1 ] && { start_vmxd || return 99; continue; }
@@ -76,7 +78,46 @@ printf "%s" "$SNAP" | /usr/bin/jq -e ".ok == true" >/dev/null 2>&1 || { echo "ER
 ELS=$(printf "%s" "$SNAP" | /usr/bin/jq -c --argjson d "$D" "[.data.tree | .. | objects | select(.ref_id? and .bounds? and .bounds.width >= 4 and .bounds.height >= 4 and (.bounds.x + .bounds.width) > 0 and (.bounds.y + .bounds.height) > 0 and .bounds.x < \$d.width and .bounds.y < \$d.height and ((.states // []) | index(\"offscreen\") | not)) | {ref: .ref_id, role, name: (.name // \"\"), x: (([.bounds.x, 0] | max) as \$l | ([.bounds.x + .bounds.width, \$d.width] | min) as \$r | (\$l + \$r) / 2 | floor), y: (([.bounds.y, 0] | max) as \$t | ([.bounds.y + .bounds.height, \$d.height] | min) as \$b | (\$t + \$b) / 2 | floor), w: (.bounds.width | floor), h: (.bounds.height | floor)}]")
 '
 SHOWEL='/usr/bin/jq -r ".[] | \"\\(.role)\\t\\(if .name == \"\" then \"-\" else .name end)\\t\\(.x),\\(.y)\\t\\(.w)x\\(.h)\""'
+# The guest lock. Every vmx call holds the guest alone while it runs, so two agents never drive it at once. It is a
+# kernel file lock (flock) on fd 9: it ends when this call ends, even on a crash, so it can never go stale. Calls made
+# inside a call (and inside `vmx job`) share it through VMX_HELD.
+held_here=""
+if [ -z "$VMX_HELD" ] && [ -n "$1" ]; then
+  L="/tmp/vmx-lock-$vm"
+  exec 9>>"$L"
+  t0=$(date +%s)
+  if ! /usr/bin/perl -MFcntl=:flock -e 'open(F, ">>&=9") or exit 2; flock(F, LOCK_EX | LOCK_NB) or exit 1'; then
+    echo "vmx: waiting for the guest. Another agent is using it: $(cat "$L.who" 2>/dev/null)" >&2
+    /usr/bin/perl -MFcntl=:flock -e 'alarm 90; open(F, ">>&=9") or exit 2; flock(F, LOCK_EX) or exit 1' \
+      || { echo "vmx: the guest is still busy after 90 s ($(cat "$L.who" 2>/dev/null)). Run the same call again as a background shell call (Claude Code: run_in_background) and keep working until it ends." >&2; exit 75; }
+    echo "vmx: got the guest after $(( $(date +%s) - t0 )) s." >&2
+  fi
+  printf '%s, pid %s, in %s, since %s\n' "$1" $$ "$PWD" "$(date +%T)" > "$L.who"
+  export VMX_HELD=1; held_here=1
+fi
+# QUIT (guest script, args EXE BUNDLE-ID): quit the app the way a person does (Cmd-Q), so it saves and ends cleanly; force it only after
+# 5 s. Then delete its saved window state, so macOS never asks to reopen windows after an earlier crash.
+QUIT='A=$HOME/.local/bin/agent-desktop; T() { /usr/bin/perl -e "alarm shift; exec @ARGV" "$@"; }
+pid=$(/usr/bin/pgrep -nx "$1")
+if [ -n "$pid" ]; then
+  n=$(T 5 $A list-apps 2>/dev/null | /usr/bin/jq -r --argjson p "$pid" "(.data.apps // [])[] | select(.pid == \$p) | .name")
+  [ -n "$n" ] && T 5 $A press cmd+q --app "$n" --force >/dev/null 2>&1
+  i=0; while /usr/bin/pgrep -x "$1" >/dev/null; do i=$((i+1))
+    [ $i = 100 ] && { echo "vmx: $1 did not quit on Cmd-Q in 5 s (a dialog may be open), so it was stopped." >&2; /usr/bin/pkill -x "$1"; }
+    [ $i = 140 ] && /usr/bin/pkill -9 -x "$1"
+    [ $i -gt 200 ] && { echo "the old $1 does not quit"; exit 1; }
+    /bin/sleep 0.05; done
+fi
+/bin/rm -rf "$HOME/Library/Saved Application State/$2.savedState" "$HOME/Library/Containers/$2/Data/Library/Saved Application State/$2.savedState"'
 case "$1" in
+job)
+  # vmx job '<host shell lines that use $S>': run several vmx calls as one, with the guest held for all of them.
+  [ -n "$2" ] || { echo "usage: vmx job '<host shell lines that use \$S>'" >&2; exit 2; }
+  t1=$(date +%s)
+  S="$here/vmx" VM="$vm" /usr/bin/perl -e 'alarm shift; exec @ARGV' 540 /bin/sh -c "$2"; rc=$?
+  [ $rc = 142 ] && echo "vmx: the job ran past 540 s and was stopped." >&2
+  echo "vmx: job exit $rc after $(( $(date +%s) - t1 )) s. The guest is free for other agents now: they may quit or replace your app. Start your next job with \$S app." >&2
+  exit $rc;;
 apps)
   res=$(raw /bin/sh -c '$HOME/.local/bin/agent-desktop list-apps | /usr/bin/jq -r ".data.apps[] | select(.presentation == \"foreground\") | .name"') || exit $?; show "$res"; exit $?;;
 ui)
@@ -105,6 +146,14 @@ exit 13' _ "$2" "$3" "$4") || { echo "vmx: no reply from the guest. The click ma
 clickxy)
   case "$2$3" in ''|*[!0-9]*) echo "usage: vmx clickxy <x> <y> (whole numbers)" >&2; exit 2;; esac
   res=$(TRIES=1 raw /bin/sh -c '$HOME/.local/bin/agent-desktop --headed mouse-click --xy "$1,$2" | /usr/bin/jq -r "if .ok then \"clicked at \($1),\($2)\" else .error.code + \": \" + .error.message end"' _ "$2" "$3") || { echo "vmx: no reply from the guest. The click may have been sent. Do not repeat it. Run vmx shot and look." >&2; exit 14; }; show "$res"; exit $?;;
+quit)
+  # vmx quit <host.app | executable name>: quit that app in the guest cleanly.
+  [ -n "$2" ] || { echo "usage: vmx quit <host.app | executable name>" >&2; exit 2; }
+  if [ -f "${2%/}/Contents/Info.plist" ]; then
+    exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${2%/}/Contents/Info.plist"); id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${2%/}/Contents/Info.plist")
+  else exe="$2"; id=""; fi
+  res=$(raw /bin/sh -c "$QUIT"'
+[ -n "$pid" ] && echo "quit $1" || echo "$1 was not running"' _ "$exe" "${id:-none}") || exit $?; show "$res"; exit $?;;
 app)
   # Copy a host .app into the guest at one fixed path, quit the old copy, launch the new one, and wait for its window.
   shift; src="${1%/}"; shift
@@ -116,8 +165,8 @@ app)
   id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$src/Contents/Info.plist")
   [ -n "$exe" ] && [ -n "$id" ] || { echo "vmx: $src has no CFBundleExecutable or CFBundleIdentifier" >&2; exit 2; }
   G=/tmp/vmx-app; P="$G/$base"
-  # 1. Quit the old copy (from the GUI session, where it runs) and wait until it is gone.
-  res=$(raw /bin/sh -c '/usr/bin/pkill -x "$1"; i=0; while /usr/bin/pgrep -x "$1" >/dev/null; do i=$((i+1)); [ $i -gt 50 ] && /usr/bin/pkill -9 -x "$1"; [ $i -gt 100 ] && { echo "the old $1 does not quit"; exit 1; }; /bin/sleep 0.05; done' _ "$exe") || exit $?
+  # 1. Quit the old copy cleanly (see QUIT).
+  res=$(raw /bin/sh -c "$QUIT" _ "$exe" "$id") || exit $?
   show "$res" || exit 1
   # 2. Copy it over ssh as one tar stream; extended attributes stay on the host.
   COPYFILE_DISABLE=1 tar --no-mac-metadata -C "$(dirname "$src")" -cf - "$base" \
@@ -131,16 +180,20 @@ app)
   fi
   if [ -n "$before" ]; then res=$(raw /bin/sh -c "$before") || exit $?; show "$res" || { echo "vmx: the --before line failed" >&2; exit 1; }; fi
   # 4. Launch with the arguments, logs to <app>.log, and wait up to 20 s for a window of that process.
-  res=$(raw /bin/sh -c 'P=$1; shift; /bin/rm -f "$P.log"; /usr/bin/open -n --stdout "$P.log" --stderr "$P.log" "$P" --args "$@" || exit 1
+  res=$(raw /bin/sh -c 'P=$1; shift; /bin/rm -f "$P.log"; /usr/bin/open -n --stdout "$P.log" --stderr "$P.log" "$P" --args "$@" -ApplePersistenceIgnoreState YES || exit 1
 i=0; while :; do
   pid=$(/usr/bin/pgrep -nx "'"$exe"'")
-  [ -n "$pid" ] && W=$($HOME/.local/bin/agent-desktop list-windows | /usr/bin/jq -r --argjson p "$pid" "[.data[] | select(.pid == \$p and .visible and .bounds.width >= 100 and .bounds.height >= 100)][0] | select(.) | \"\(.app_name)\t\(.bounds.width|floor)x\(.bounds.height|floor)\"") && [ -n "$W" ] && break
-  i=$((i+1)); [ $i -gt 100 ] && { echo "no window after 20 s. Log: $P.log"; /usr/bin/tail -5 "$P.log"; exit 1; }
+  [ -n "$pid" ] && W=$(/usr/bin/perl -e "alarm 5; exec @ARGV" $HOME/.local/bin/agent-desktop list-windows 2>/dev/null | /usr/bin/jq -r --argjson p "$pid" "[(.data // [])[] | select(.pid == \$p and .visible and .bounds.width >= 100 and .bounds.height >= 100)][0] | select(.) | \"\(.app_name)\t\(.bounds.width|floor)x\(.bounds.height|floor)\"") && [ -n "$W" ] && break
+  i=$((i+1))
+  [ -z "$pid" ] && [ $i -gt 10 ] && { echo "the app quit right after launch. Log: $P.log"; /usr/bin/tail -5 "$P.log"; exit 1; }
+  [ $i -gt 100 ] && { echo "no window after 20 s. Log: $P.log"; /usr/bin/tail -5 "$P.log"; exit 1; }
   /bin/sleep 0.2; done
 printf "%s\n" "$W"' _ "$P" "$@") || exit $?
   out=$(show "$res") || { printf '%s\n' "$out" >&2; exit 1; }
   name=$(printf '%s' "$out" | cut -f1); size=$(printf '%s' "$out" | cut -f2)
-  echo "running \"$name\" ($size window) from $P. Use \"$name\" as <app> in ui, click, and film. Log: $P.log"; exit 0;;
+  echo "running \"$name\" ($size window) from $P. Use \"$name\" as <app> in ui, click, and film. Log: $P.log"
+  [ -n "$held_here" ] && echo "vmx: the guest is shared. Another agent may quit or replace this app before your next call. To keep it, launch it and use it in one call: \$S job '\$S app ... && \$S film ...'" >&2
+  exit 0;;
 film)
   shift; LIST="$LIST" exec /bin/sh "$(dirname "$0")/film.sh" "$vm" "$@";;
 shot)

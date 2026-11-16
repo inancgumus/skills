@@ -16,9 +16,26 @@ while (1) {
         my $pid = fork;
         next unless defined $pid;
         if ($pid == 0) {
+            # The command runs in its own process group with a time limit, so nothing it starts can hang in the
+            # guest forever: at the limit the whole group gets TERM, then KILL, and the call returns 124.
+            $SIG{CHLD} = 'DEFAULT';
             open STDIN, '<', '/dev/null'; open STDOUT, '>', "$id.out"; open STDERR, '>', "$id.err";
-            my $rc = system '/bin/sh', "$id.run";
+            my $limit = 600;
+            if (open my $l, '<', "$id.limit") { $limit = <$l> + 0 || 600; close $l; }
+            my $kid = fork;
+            if (defined $kid && $kid == 0) { setpgrp(0, 0); { exec '/bin/sh', "$id.run" }; POSIX::_exit(127); }
+            my $rc;
+            eval {
+                local $SIG{ALRM} = sub { die "limit\n" };
+                alarm $limit; waitpid $kid, 0; $rc = $?; alarm 0;
+            };
+            if ($@) {
+                kill 'TERM', -$kid; sleep 2; kill 'KILL', -$kid; waitpid $kid, 0;
+                print STDERR "vmx: the command ran past $limit s in the guest, so vmxd stopped it and everything it started.\n";
+                $rc = 124 << 8;
+            }
             $rc = $rc == -1 ? 127 : ($rc & 127 ? 128 + ($rc & 127) : $rc >> 8);
+            unlink "$id.limit";
             open my $r, '>', "$id.rc.t"; print $r "$rc\n"; close $r; rename "$id.rc.t", "$id.rc";
             POSIX::_exit(0);
         }
