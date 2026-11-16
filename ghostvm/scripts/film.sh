@@ -93,13 +93,15 @@ findpt() (
 $LIST
 printf '%s' \"\$ELS\" | /usr/bin/jq -r --arg n \"\$2\" '(\$n | ascii_downcase) as \$n | [.[] | select((.name | ascii_downcase) == \$n)] as \$e | (if (\$e | length) > 0 then \$e else [.[] | select(.name | ascii_downcase | contains(\$n))] end) | (map(\"\\(.x),\\(.y)\") | unique) as \$p | if (\$p | length) == 1 then \$p[0] else \"\\(\$p | length) on-screen places match that name\" end'
 )
-fail() { echo \"\$1\"; /bin/cat \$G/log; /usr/bin/pkill -f film-$hash; echo failed > \$G/status; exit 1; }
+fail() { echo \"\$1\"; /bin/cat \$G/log; /usr/bin/pkill -9 -f film-$hash; echo failed > \$G/status; exit 1; }
+STUCK='The guest video encoder does not answer (VideoToolbox hangs in the guest), so every film fails until the guest restarts. Ask the user to restart the guest. Meanwhile use shot for stills, and do not retry films or kill recorders.'
+/usr/bin/pgrep -f film-$hash > /dev/null && fail \"film: an earlier recorder is still stuck in the guest. \$STUCK\"
 /bin/rm -f \$G/stop \$G/log \$G/status \$G/out.$ext \$G/times \$T
 \$A focus-window --app $(q "$app") > /dev/null 2>&1; /bin/sleep 0.3   # bring the app to the front, so the film and the clicks hit it
 (\$G/film-$hash \$G/out.$ext $budget --app $(q "$app") $opts --stop \$G/stop --tick \$T > \$G/log 2>&1 &)
-i=0; while ! /usr/bin/grep -q '^recording' \$G/log 2>/dev/null; do
+S0=\$(ms); while ! /usr/bin/grep -q '^recording' \$G/log 2>/dev/null; do
   /usr/bin/grep -q '^film:' \$G/log 2>/dev/null && fail 'film: the recorder failed:'
-  i=\$((i+1)); [ \$i -gt 200 ] && fail 'film: the recorder did not start in 10 s:'
+  [ \$(( \$(ms) - S0 )) -gt 10000 ] && fail \"film: the recorder did not start in 10 s. \$STUCK\"
   /bin/sleep 0.05; done
 T0=\$(/usr/bin/awk '/^recording/{print \$2}' \$G/log)
 act() { n=\$1; shift; e=\$(/usr/bin/perl -MTime::HiRes=time -e 'printf \"%.3f\", time'); s=\$(( \$(ms) - T0 )); /bin/rm -f \$G/done; (\"\$@\" > /dev/null 2>&1; /usr/bin/touch \$G/done) & R=\$(/usr/bin/perl \$G/settle.pl \$T \$e \$T0 \$G/done); wait; echo \"\$s ms: \$n | \$R\" >> \$G/times; case \$R in NO*|*STILL*) echo \"film: warning: \$n: \$R\";; esac; }

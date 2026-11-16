@@ -166,6 +166,7 @@ Read the times file after every film:
 | `NO CHANGE in 2 s` | Nothing changed within 2 s, so the action likely missed. An animation that starts later than 2 s after its trigger also lands here. | Take a `shot`, check the target, and film again. |
 | `NOT CLICKED: …` | No single on-screen element had that name when the action ran. | Run `ui` for the names on screen. A button's name can change after a click (*show sidebar* becomes *hide sidebar*). |
 | `STILL CHANGING 30 s later` | Something keeps moving (a spinner, a video). | Film with `--rect` around the part you care about. |
+| `the recorder did not start` or `an earlier recorder is still stuck` | The guest's video encoder hangs, so no film can start until the guest restarts. | Ask the user to restart the guest. Use `shot` for stills meanwhile. Don't retry films or kill recorders. |
 
 A spinner or a video in the window also counts as a change, so every action then waits 30 s. Use `--rect` to record only the part you care about; it also makes the file small. Hand the `.mov` itself to people and tell them to view it at actual size; a player that scales it to fit makes it look soft. Use `--1x` only when file size matters more than detail.
 
