@@ -2,24 +2,138 @@
 # vmx: run one program in a GhostVM guest; print its stdout/stderr; exit with its exit code.
 #   vmx [-n VM] <abs-path-to-program> [args...]     run a program
 #   vmx [-n VM] sh '<shell line>'                   run a shell line (/bin/sh -c)
-#   vmx [-n VM] pull <guest-file> <host-file>       copy a guest file out (chunked, checksum-verified; ~1 MB takes tens of seconds)
+#   vmx [-n VM] pull <guest-file> <host-file>       copy a guest file out (checksum-verified; over ssh if available, else slow chunks ~1 MB/min)
+#   vmx [-n VM] push <host-file> <guest-file>       copy a host file in (needs ssh to the guest)
+#   vmx [-n VM] apps                                names of running GUI apps (use these names with --app)
+#   vmx [-n VM] ui <app> [text]                     on-screen interactive elements: role, name, click point, size (only names containing text)
+#   vmx [-n VM] click <app> <name> [role]           click the one on-screen element with that exact name
+#   vmx [-n VM] clickxy <x> <y>                     physical click at guest screen point (guest must be yours alone)
+#   vmx [-n VM] film <app> <out.mov> <action>...    record the app window at 60 fps, 2x, while actions run (click NAME | xy X,Y | key NAME)
+#   vmx [-n VM] shot <host-file.png>                screenshot: <file> at the screen's size in points, plus <file>@2x.png at full pixels
 # VM name: -n, else $VM, else the only VM `vmctl list` shows (name = bundle basename without .GhostVM).
-# Retries "Empty response" / 500 up to 3 times. Needs jq.
+# With ssh to the guest, commands go through vmxd (see vmxd.pl): no GhostTools 30 s hangs, nothing runs twice. Without ssh, vmx retries
+# empty replies up to 3 times (click and clickxy never retry). Needs jq on the host.
 vm="${VM:-}"
 [ "$1" = "-n" ] && { vm="$2"; shift 2; }
 if [ -z "$vm" ]; then
   vm=$(vmctl list | awk '{print $1}' | sed 's#.*/##; s#\.GhostVM$##')
   [ "$(printf '%s\n' "$vm" | wc -l)" -eq 1 ] && [ -n "$vm" ] || { echo "vmx: pick a VM with -n or \$VM. Found: $vm" >&2; exit 2; }
 fi
-raw() { # run exec with retries; echo JSON on success
+# ssh to the guest, if Remote Login is on and ~/.ssh/config has "Host ghostvm-<VM>" (or set VMX_SSH). One shared connection.
+sshh="${VMX_SSH:-ghostvm-$vm}"
+squote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+sopt="-o BatchMode=yes -o ConnectTimeout=3 -o ControlPath=/tmp/vmx-%C"
+# The shared connection starts on its own with no stdin/stdout, so it never holds a caller's output open.
+master() { ssh $sopt -O check "$sshh" 2>/dev/null || ssh $sopt -o ControlMaster=yes -o ControlPersist=600 -fN "$sshh" </dev/null >/dev/null 2>&1; }
+# Every call has a hard limit (VMX_TIMEOUT seconds, default 600), so nothing can hang forever.
+# The guest's login shell may be zsh, so every remote command runs under /bin/sh.
+gssh() { /usr/bin/perl -e 'alarm shift; exec @ARGV' "${VMX_TIMEOUT:-600}" ssh $sopt -o ControlMaster=no "$sshh" "/bin/sh -c $(squote "$*")"; }
+have_ssh() { [ -n "$ssh_ok" ] || { master && ssh_ok=yes || ssh_ok=no; }; [ "$ssh_ok" = yes ]; }
+# GhostTools exec can hang 30 s per call (GhostVM issue #268). With ssh, vmx uses exec once to start vmxd in the
+# guest's GUI session, then sends every command to vmxd over ssh: one ssh round trip per command, no hangs.
+here=$(cd "$(dirname "$0")" && pwd)
+Q="/tmp/.vmx-q-$(/sbin/md5 -q "$here/vmxd.pl" | cut -c1-8)"
+# Waits in the guest for a file; gives up with the same limit as the call, so nothing is left polling forever.
+waitfile() { printf "/usr/bin/perl -e '\$e = time + \$ARGV[1]; select undef, undef, undef, 0.005 until -e \$ARGV[0] or time > \$e; exit !-e \$ARGV[0]' %s %s" "$1" "${VMX_TIMEOUT:-600}"; }
+start_vmxd() {
+  gssh "for p in /tmp/.vmx-q-*/pid; do [ -f \$p ] && /bin/kill \$(/bin/cat \$p) 2>/dev/null; /bin/rm -f \$p; done; /bin/mkdir -p $Q && /bin/cat > $Q/vmxd.pl" < "$here/vmxd.pl" || return 1
+  vmctl remote --name "$vm" --json exec /bin/sh -c "/usr/bin/nohup /usr/bin/perl $Q/vmxd.pl $Q > /dev/null 2>&1 & /bin/sleep 0.3" >/dev/null 2>&1 &
+  cpid=$!
+  gssh "i=0; until [ -f $Q/pid ] && /bin/kill -0 \$(/bin/cat $Q/pid) 2>/dev/null; do i=\$((i+1)); [ \$i -gt 1000 ] && exit 1; /bin/sleep 0.05; done"; rc=$?
+  kill $cpid 2>/dev/null
+  [ $rc = 0 ] || echo "vmx: could not start vmxd in the guest. Check vmctl remote --name $vm health." >&2
+  return $rc
+}
+# raw: run a command in the guest's GUI session; print {stdout, stderr, exitCode} as JSON.
+raw() {
+  if have_ssh; then
+    line="exec"; for a in "$@"; do line="$line $(squote "$a")"; done
+    for try in 1 2; do
+      id="$$-$try-$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')"
+      res=$(printf '%s\n' "$line" | gssh "Q=$Q; [ -f \$Q/pid ] && /bin/kill -0 \$(/bin/cat \$Q/pid) 2>/dev/null || exit 98; /bin/cat > \$Q/$id.t && /bin/mv \$Q/$id.t \$Q/$id.cmd && $(waitfile "\$Q/$id.rc") && /usr/bin/jq -n --rawfile stdout \$Q/$id.out --rawfile stderr \$Q/$id.err --argjson exitCode \$(/bin/cat \$Q/$id.rc) '{\$stdout, \$stderr, \$exitCode}'; /bin/rm -f \$Q/$id.*")
+      rc=$?
+      [ $rc = 0 ] && { printf '%s' "$res"; return 0; }
+      [ $rc = 98 ] && [ $try = 1 ] && { start_vmxd || return 99; continue; }
+      [ $rc = 142 ] && { echo "vmx: the command ran past ${VMX_TIMEOUT:-600} s and was stopped. Run long jobs detached (see SKILL.md), or raise VMX_TIMEOUT." >&2; return 99; }
+      echo "vmx: lost the ssh connection to the guest (exit $rc)" >&2; return 99
+    done
+  fi
   i=0
-  while [ $i -lt 3 ]; do
+  while [ $i -lt ${TRIES:-3} ]; do
     out=$(vmctl remote --name "$vm" --json exec "$@" 2>&1) && printf '%s' "$out" | jq -e . >/dev/null 2>&1 && { printf '%s' "$out"; return 0; }
     i=$((i+1)); sleep 0.3
   done
-  echo "vmx: guest gave no valid reply after 3 tries: $out" >&2; return 99
+  echo "vmx: guest gave no valid reply after ${TRIES:-3} tries: $out" >&2; return 99
 }
 show() { printf '%s' "$1" | jq -j ".stdout // empty" ; printf '%s' "$1" | jq -j ".stderr // empty" >&2; return $(printf '%s' "$1" | jq -r '.exitCode // 0'); }
+GA='$HOME/.local/bin/agent-desktop'
+# One guest script builds the list of usable elements: on screen, at least 4x4, inside the display.
+LIST='A=$HOME/.local/bin/agent-desktop
+D=$($A list-displays | /usr/bin/jq -c ".data[0].bounds")
+SNAP=$($A snapshot --app "$1" -i --compact --include-bounds 2>&1)
+printf "%s" "$SNAP" | /usr/bin/jq -e ".ok == true" >/dev/null 2>&1 || { echo "ERROR: cannot read $1: $(printf "%s" "$SNAP" | /usr/bin/jq -r ".error.code + \": \" + .error.message" 2>/dev/null || printf "%s" "$SNAP" | head -c 200)"; exit 10; }
+ELS=$(printf "%s" "$SNAP" | /usr/bin/jq -c --argjson d "$D" "[.data.tree | .. | objects | select(.ref_id? and .bounds? and .bounds.width >= 4 and .bounds.height >= 4 and (.bounds.x + .bounds.width) > 0 and (.bounds.y + .bounds.height) > 0 and .bounds.x < \$d.width and .bounds.y < \$d.height and ((.states // []) | index(\"offscreen\") | not)) | {ref: .ref_id, role, name: (.name // \"\"), x: (([.bounds.x, 0] | max) as \$l | ([.bounds.x + .bounds.width, \$d.width] | min) as \$r | (\$l + \$r) / 2 | floor), y: (([.bounds.y, 0] | max) as \$t | ([.bounds.y + .bounds.height, \$d.height] | min) as \$b | (\$t + \$b) / 2 | floor), w: (.bounds.width | floor), h: (.bounds.height | floor)}]")
+'
+SHOWEL='/usr/bin/jq -r ".[] | \"\\(.role)\\t\\(if .name == \"\" then \"-\" else .name end)\\t\\(.x),\\(.y)\\t\\(.w)x\\(.h)\""'
+case "$1" in
+apps)
+  res=$(raw /bin/sh -c '$HOME/.local/bin/agent-desktop list-apps | /usr/bin/jq -r ".data.apps[] | select(.presentation == \"foreground\") | .name"') || exit $?; show "$res"; exit $?;;
+ui)
+  [ -n "$2" ] || { echo "usage: vmx ui <app> [text]" >&2; exit 2; }
+  res=$(raw /bin/sh -c "$LIST"'printf "%s" "$ELS" | '"$SHOWEL" _ "$2") || exit $?
+  [ -z "$3" ] && { show "$res"; exit $?; }
+  # With text: only the elements whose name contains it (any case).
+  out=$(show "$res") || { printf '%s\n' "$out"; exit 10; }
+  m=$(printf '%s\n' "$out" | awk -F'\t' -v t="$3" 'index(tolower($2), tolower(t))')
+  [ -n "$m" ] || { echo "no on-screen element in $2 has \"$3\" in its name" >&2; exit 11; }
+  printf '%s\n' "$m"; exit 0;;
+click)
+  [ -n "$3" ] || { echo "usage: vmx click <app> <name> [role]" >&2; exit 2; }
+  res=$(TRIES=1 raw /bin/sh -c "$LIST"'
+M=$(printf "%s" "$ELS" | /usr/bin/jq -c --arg n "$2" --arg r "$3" "[.[] | select((.name | ascii_downcase) == (\$n | ascii_downcase) and (\$r == \"\" or .role == \$r))]")
+N=$(printf "%s" "$M" | /usr/bin/jq length)
+if [ "$N" = 0 ]; then echo "NO MATCH for \"$2\" in $1. On-screen elements:"; printf "%s" "$ELS" | '"$SHOWEL"'; exit 11; fi
+if [ "$N" -gt 1 ]; then echo "$N matches for \"$2\". Pass a role as the third argument, or use clickxy with one of these points:"; printf "%s" "$M" | '"$SHOWEL"'; exit 12; fi
+REF=$(printf "%s" "$M" | /usr/bin/jq -r ".[0].ref"); PT=$(printf "%s" "$M" | /usr/bin/jq -r ".[0] | \"\\(.x),\\(.y)\"")
+OUT=$($A click "$REF" 2>&1)
+if printf "%s" "$OUT" | /usr/bin/jq -e ".ok == true" >/dev/null 2>&1; then echo "clicked \"$2\" at $PT. Run vmx shot to confirm the result."; exit 0; fi
+CODE=$(printf "%s" "$OUT" | /usr/bin/jq -r ".error.code // \"?\""); DEL=$(printf "%s" "$OUT" | /usr/bin/jq -r ".error.disposition.delivery // \"?\"")
+echo "click $CODE ($DEL) on \"$2\" at $PT."
+[ "$DEL" = delivered_unverified ] && echo "The click may have worked. Do not repeat it. Run vmx shot and look."
+exit 13' _ "$2" "$3" "$4") || { echo "vmx: no reply from the guest. The click may have been sent. Do not repeat it. Run vmx shot and look." >&2; exit 14; }; show "$res"; exit $?;;
+clickxy)
+  case "$2$3" in ''|*[!0-9]*) echo "usage: vmx clickxy <x> <y> (whole numbers)" >&2; exit 2;; esac
+  res=$(TRIES=1 raw /bin/sh -c '$HOME/.local/bin/agent-desktop --headed mouse-click --xy "$1,$2" | /usr/bin/jq -r "if .ok then \"clicked at \($1),\($2)\" else .error.code + \": \" + .error.message end"' _ "$2" "$3") || { echo "vmx: no reply from the guest. The click may have been sent. Do not repeat it. Run vmx shot and look." >&2; exit 14; }; show "$res"; exit $?;;
+film)
+  shift; LIST="$LIST" exec /bin/sh "$(dirname "$0")/film.sh" "$vm" "$@";;
+shot)
+  [ -n "$2" ] || { echo "usage: vmx shot <host-file.png>" >&2; exit 2; }
+  # One capture at full pixels (Retina) in the guest. The host keeps it as <name>@2x.png and makes <name>.png at the
+  # display's size in points, where a pixel is a click point.
+  W=$("$0" -n "$vm" sh 'A=$HOME/.local/bin/agent-desktop; $A screenshot --screen 0 /tmp/.vmx-shot.png >/dev/null && $A list-displays | /usr/bin/jq -r ".data[0].bounds.width | floor"') || exit $?
+  two="${2%.*}@2x.png"
+  "$0" -n "$vm" pull /tmp/.vmx-shot.png "$two" >/dev/null || exit $?
+  sips -s dpiWidth 144 -s dpiHeight 144 "$two" >/dev/null
+  case "$2" in *.jpg|*.jpeg) fmt="jpeg -s formatOptions 90";; *) fmt=png;; esac
+  sips --resampleWidth "$W" -s format $fmt -s dpiWidth 72 -s dpiHeight 72 "$two" --out "$2" >/dev/null || exit 1
+  echo "saved $2 (read this one; a pixel is a click point) and $two (Retina, for people and for zoomed detail)"; exit 0;;
+esac
+# Files go over ssh when it is set up. `exec` only carries ~48 KB per call.
+if [ "$1" = "push" ]; then
+  have_ssh || { echo "vmx: push needs ssh to the guest (Host $sshh). Use the shared folder instead, or ask the user to turn on Remote Login." >&2; exit 1; }
+  [ -f "$2" ] && [ -n "$3" ] || { echo "usage: vmx push <host-file> <guest-file>" >&2; exit 2; }
+  gssh "/bin/cat > '$3'" < "$2" || exit 1
+  want=$(/sbin/md5 -q "$2"); got=$(gssh "/sbin/md5 -q '$3'")
+  [ "$got" = "$want" ] || { echo "vmx: checksum mismatch after push (host $want, guest $got)." >&2; exit 1; }
+  echo "pushed $3"; exit 0
+fi
+if [ "$1" = "pull" ] && have_ssh; then
+  g="$2"; h="$3"
+  gssh "/bin/cat '$g'" > "$h" || { rm -f "$h"; exit 1; }
+  want=$(gssh "/sbin/md5 -q '$g'"); got=$(/sbin/md5 -q "$h")
+  [ "$got" = "$want" ] || { echo "vmx: checksum mismatch (guest $want, host $got). Pull again." >&2; rm -f "$h"; exit 1; }
+  echo "saved $h"; exit 0
+fi
 if [ "$1" = "pull" ]; then
   g="$2"; h="$3"; tmp=$(mktemp "${h}.XXXXXX") || exit 1; trap 'rm -f "$tmp"' EXIT
   # Encode once in the guest. A reply over ~64 KB hangs, so read 48 KB pieces.
