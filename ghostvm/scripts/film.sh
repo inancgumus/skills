@@ -7,6 +7,7 @@
 # Actions:  click NAME real click on the element with that exact name, else the one whose name contains it (looked up when it runs)
 #           xy X,Y     real click at a guest screen point (a `shot` pixel)
 #           key NAME   press a key in the app (return, escape, cmd+z ...)
+#           wheel X,Y DY  scroll the mouse wheel at a point by DY lines, one line at a time (negative scrolls down)
 # After every action the film waits until the picture changes and then stays still for 0.3 s (every changed pixel
 # counts, even a 1 pt wobble), so nothing sleeps for a guessed time. It warns when an action changed nothing for
 # 2 s. Recording starts 0.3 s before the first action and stops --tail ms (default 300) after the last one settles.
@@ -27,7 +28,7 @@ while :; do
     *) break;;
   esac
 done
-[ -n "$app" ] && [ -n "$out" ] && [ $# -gt 0 ] || { echo "usage: vmx film <app> <out.mov> [--rect x,y,w,h] [--1x] [--tail MS] <click NAME | xy X,Y | key NAME>..." >&2; exit 2; }
+[ -n "$app" ] && [ -n "$out" ] && [ $# -gt 0 ] || { echo "usage: vmx film <app> <out.mov> [--rect x,y,w,h] [--1x] [--tail MS] <click NAME | xy X,Y | key NAME | wheel X,Y DY>..." >&2; exit 2; }
 # Time budget: each action gets 40 s (lookup, click, up to 30 s of settling). The film fails at the budget instead of
 # running into an agent's 10 min command limit.
 budget=$(( 20 + $# * 40 + tail / 1000 ))
@@ -69,7 +70,14 @@ p=\$(findpt $(q "$app") $(q "${a#click }")); case \$p in [0-9]*,[0-9]*) act $(q 
 act \"xy $p\" \$A --headed mouse-click --xy $p";;
     "key "*) steps="$steps
 act $(q "$a") \$A press $(q "${a#key }") --app $(q "$app")";;
-    *) echo "film: unknown action \"$a\" (use: click NAME | xy X,Y | key NAME). There is no wait: every action waits for the picture to settle." >&2; exit 2;;
+    "wheel "*) w=${a#wheel }; p=${w%% *}; dy=${w#* }
+            case "$p" in *[!0-9,]*|''|*,*,*) p=bad;; *,*) ;; *) p=bad;; esac
+            case "$dy" in -[1-9]|-[1-9][0-9]|[1-9]|[1-9][0-9]) ;; *) p=bad;; esac
+            [ "$p" = bad ] && { echo "film: bad wheel action \"$a\" (use wheel X,Y DY: DY lines from -99 to 99, negative scrolls down)" >&2; exit 2; }
+            one=1; n=$dy; case "$dy" in -*) one=-1; n=${dy#-};; esac
+            steps="$steps
+act $(q "$a") /bin/sh -c 'i=0; while [ \$i -lt $n ]; do \$0 mouse-wheel --x ${p%,*} --y ${p#*,} --dy=$one --headed || exit 1; i=\$((i+1)); done' \$A";;
+    *) echo "film: unknown action \"$a\" (use: click NAME | xy X,Y | key NAME | wheel X,Y DY). There is no wait: every action waits for the picture to settle." >&2; exit 2;;
   esac
 done
 
@@ -94,7 +102,7 @@ i=0; while ! /usr/bin/grep -q '^recording' \$G/log 2>/dev/null; do
   i=\$((i+1)); [ \$i -gt 200 ] && fail 'film: the recorder did not start in 10 s:'
   /bin/sleep 0.05; done
 T0=\$(/usr/bin/awk '/^recording/{print \$2}' \$G/log)
-act() { n=\$1; shift; e=\$(/usr/bin/perl -MTime::HiRes=time -e 'printf \"%.3f\", time'); s=\$(( \$(ms) - T0 )); \"\$@\" > /dev/null 2>&1; R=\$(/usr/bin/perl \$G/settle.pl \$T \$e \$T0); echo \"\$s ms: \$n | \$R\" >> \$G/times; case \$R in NO*|*STILL*) echo \"film: warning: \$n: \$R\";; esac; }
+act() { n=\$1; shift; e=\$(/usr/bin/perl -MTime::HiRes=time -e 'printf \"%.3f\", time'); s=\$(( \$(ms) - T0 )); /bin/rm -f \$G/done; (\"\$@\" > /dev/null 2>&1; /usr/bin/touch \$G/done) & R=\$(/usr/bin/perl \$G/settle.pl \$T \$e \$T0 \$G/done); wait; echo \"\$s ms: \$n | \$R\" >> \$G/times; case \$R in NO*|*STILL*) echo \"film: warning: \$n: \$R\";; esac; }
 miss() { echo \"\$(( \$(ms) - T0 )) ms: \$1 | NOT CLICKED: \$2\" >> \$G/times; echo \"film: warning: \$1: not clicked: \$2. Run vmx ui for the names on screen.\"; }
 /bin/sleep 0.3
 $steps

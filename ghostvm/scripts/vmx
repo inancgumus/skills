@@ -12,7 +12,7 @@
 #   vmx [-n VM] clickxy <x> <y>                     physical click at guest screen point (guest must be yours alone)
 #   vmx [-n VM] app <host.app> [--fresh] [--before LINE] [-- args]   install the app at /tmp/vmx-app, relaunch it, wait for its window
 #   vmx [-n VM] quit <host.app | executable>      quit an app cleanly (Cmd-Q, forced after 5 s, or after 1 s with no Quit menu item)
-#   vmx [-n VM] film <app> <out.mov|.mp4|.png> <action>...   record the app window at 60 fps, 2x, while actions run (click NAME | xy X,Y | key NAME); .png keeps only the last frame
+#   vmx [-n VM] film <app> <out.mov|.mp4|.png> <action>...   record the app window at 60 fps, 2x, while actions run (click NAME | xy X,Y | key NAME | wheel X,Y DY); .png keeps only the last frame
 #   vmx frames <film> [--from MS] [--to MS] [--rect x,y,w,h] [--cols N] [--zoom N]   one contact sheet of the film's real frames, each labeled with its time (host only)
 #   vmx frames <picture>... [--rect x,y,w,h] [--cols N] [--zoom N]   pictures side by side, cropped alike, each labeled with its name (host only)
 #   vmx pixels <film> X,Y [X,Y...] [--from MS] [--to MS]       each point's color in every frame of the film, as a table (host only)

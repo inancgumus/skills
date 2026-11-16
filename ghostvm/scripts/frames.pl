@@ -5,7 +5,7 @@
 # with its film time in ms, the same times as <film>.times.txt. Or one sheet of pictures (.png, .jpg), each labeled with
 # its file name, all cropped to the same --rect, to compare them side by side. --rect is in screen points (a `shot`
 # pixel). A picture without <picture>.area counts its own pixels, halved for an @2x name. Tiles keep full detail when
-# they fit 2400 px across; --cols sets the columns (1 stacks them), --zoom N enlarges small crops N times with sharp
+# they fit 2400 px across and 4800 px down; --cols sets the columns (1 stacks them), --zoom N enlarges small crops N times with sharp
 # pixels. At most 24 frames: with more, it picks evenly and says which. Runs on the host only.
 use strict; use warnings; use File::Basename qw(dirname basename); use POSIX qw(ceil);
 { use Cwd (); my $lib = Cwd::abs_path(dirname(__FILE__)) . '/filmlib.pl'; require $lib; }
@@ -59,7 +59,11 @@ my @c = map { [crop($_)] } @src;
 my ($cw, $ch) = @{$c[0]}[2, 3];
 for (@c) { $cw = $_->[2] if $_->[2] > $cw; $ch = $_->[3] if $_->[3] > $ch }
 my $full = $cw * $zoom;
-$cols //= do { my $k = int(2400 / $full); $k < 1 ? 1 : $k > 4 ? 4 : $k };
+# With no --cols, more columns (up to 4, shrinking the tiles) keep the sheet under 4800 px tall.
+$cols //= do {
+    my $k = int(2400 / $full); $k = $k < 1 ? 1 : $k > 4 ? 4 : $k;
+    while ($k < 4 && $k < $count) { my $w = $full < 2400 / $k ? $full : 2400 / $k; last if ceil($count / $k) * $ch * $w / $cw <= 4800; $k++ }
+    $k };
 $cols = $count if $cols > $count;
 my $rows = ceil($count / $cols);
 my $tw = int(2400 / $cols); $tw = $full if $full < $tw; $tw -= $tw % 2;
