@@ -33,6 +33,7 @@ Set `S=<this skill's dir>/scripts/vmx` (needs `jq` on the host). Pass `-n <VM>` 
 | `$S app <host.app> [--fresh] [--before '<line>'] [-- args...]` | Needs ssh. Copies the app into the guest at `/tmp/vmx-app/<name>.app` (the same path every time), quits the copy already running the way a person does (Cmd-Q, forced after 5 s) and clears its saved windows, so macOS never shows a *reopen windows?* dialog after a crash, launches the new one with the arguments, waits for its window, and prints the app name to use with `ui`, `click`, and `film`. `--fresh` first deletes the app's saved data and settings. `--before` runs a guest shell line just before launch, such as `defaults write`. Its output goes to `/tmp/vmx-app/<name>.app.log`. Takes about 3 s. |
 | `$S quit <host.app or executable>` | Quits the app cleanly (Cmd-Q, forced after 5 s). Never stop an app with `kill -9`: a crash makes macOS ask about it at the next launch. |
 | `$S job '<lines>'` | Runs several `$S` calls as one, holding the guest until they end (see *Share the guest*). |
+| `$S lease` | Keeps the guest for you across calls, for looking before you decide. Prints a token to put before each call (see *Share the guest*). |
 | `$S film <app> <out.mov> [--rect x,y,w,h] [--hevc] [--1x] [--tail MS] <action>...` | Needs ssh to the guest. Records the app's window at 60 fps and full Retina pixels while the actions run, as ProRes 4444, which matches a Retina screenshot exactly (about 30 MB per second of motion; `--hevc` makes it about 100 times smaller and slightly soft), and saves the film on the host plus `<out>.times.txt`. Quote each action as one argument (`"click Add to Favorites"`). Actions: `click NAME` (real click on the element with that exact name, else on the one whose name contains NAME, such as part of a list row's title; looked up when the action runs), `xy X,Y` (real click at a point), and `key NAME`. After each action it waits until the picture changes and then stays still for 0.3 s, so nothing sleeps for a guessed time. Every changed pixel counts, even a 1 pt wobble. Before recording, `film` brings the app to the front. Recording starts just before the first action and stops `--tail` ms (default 300) after the last one settles. `--rect` records only that part of the screen, in guest screen points read off a `shot`. It also saves the last frame at full pixels next to it (`star.mov` gets `star.mov.png`). A 4 s film takes about 9 to 12 s in total. A stuck film stops itself after 40 s per action (12 actions at most) and says so, so it never runs into a 10 min command limit. An `.mp4` name gives an HEVC mp4, because ProRes can't go in an mp4. |
 | `$S pull <guest-file> <host-file>` | Copies a guest file to the host and checks an md5 checksum. Takes about a second over ssh. Without ssh it takes about a minute per MB, so keep files small. |
 | `$S push <host-file> <guest-file>` | Copies a host file into the guest over ssh and checks an md5 checksum. Fails when ssh isn't set up. |
@@ -50,17 +51,39 @@ Exit codes for `ui` and `click`:
 | 13 | The click failed | Read the printed message. If it says *may have worked*, do not repeat it. Run `shot` and look. |
 | 14 | No reply from the guest | The click may have been sent. Do not repeat it. Run `shot` and look. |
 
+Exit codes for every command:
+
+| Code | Meaning | Do |
+|---|---|---|
+| 2 | Wrong use: `click`, `clickxy`, or `film` ran alone, or a job ran something other than `$S` | Read the printed message and do what it says. |
+| 75 | The guest was still busy after 90 s | Run the same call again as a background shell call and keep working. |
+| 76 | Your lease has ended | Take a new lease, or put the steps in one `$S job`. |
+
 ## Share the guest
 
-`vmx` holds the guest alone for each call, so two agents never drive it at once. You never take or release a lock. A call that finds the guest busy waits for it (up to 90 s) and says who has it. If it is still busy after that, `vmx` exits 75: run the same call again as a background shell call (Claude Code: `run_in_background`) and keep working.
+Other agents may use the same guest. `vmx` keeps them apart by itself, so you never take or release a lock:
 
-Between your calls, other agents may use the guest: they may quit or replace your app and change the screen. To do several things in a row, run them as one call with `$S job`, which holds the guest until its lines end (at most 540 s):
+* Each call holds the guest alone while it runs. Callers go one at a time, in the order they came. A busy guest makes the call wait (up to 90 s) and say who has it. If it is still busy, the call exits 75: run it again as a background shell call (Claude Code: `run_in_background`) and keep working.
+* Between your calls, another agent may quit or replace your app and change the screen. So `click`, `clickxy`, and `film` refuse to run alone: they run only inside a job or a lease.
+
+A job runs several calls as one and holds the guest until they end (at most 540 s). Start it with `$S app`, then replay every click it needs:
 
 ```sh
-$S job '$S app ./MyApp.app --fresh -- <args> && $S film "My App" /tmp/a.mov "click Star"'
+$S job '$S app ./MyApp.app --fresh -- <args> && $S click "My App" Settings && $S film "My App" /tmp/a.mov "click Dark"'
 ```
 
-So every job starts from `$S app` and replays every click it needs. Never rely on what an earlier call left on screen. Build, package, and copy test data on the host before the job, not inside it.
+A job may only run `$S` commands (`| grep` and `| head` may filter them). Build, package, and wait on the host before it, never inside.
+
+A lease keeps the guest for you across calls, so you can look at a screenshot before you decide the next click. Use it only for that, because everyone else waits meanwhile:
+
+```sh
+$S lease                                         # prints VMX_LEASE=<token>
+VMX_LEASE=<token> $S shot /tmp/s.png             # start every call with the token, then read the file and decide
+VMX_LEASE=<token> $S click "My App" "Settings"
+VMX_LEASE=<token> $S lease end                   # give the guest back as soon as you are done
+```
+
+A lease ends 45 s after its last call ends, and 120 s after it started at most. After that, a call with its token exits 76. When a lease ends, the agents already waiting go first.
 
 ## Take a screenshot
 
@@ -79,15 +102,15 @@ Read `/tmp/s.png`. Open `/tmp/s@2x.png` only to check fine detail, or to hand it
 3. `$S click <app> "<name>"`. Never reuse a ref or a list from an earlier call. If `click` can't reach it, use `clickxy` with the point from `ui` or from the screenshot.
 4. `$S shot /tmp/after.png`, then read `/tmp/after.png`. A returned success only means the click was sent. Continue only when the screen shows the result.
 
-When other agents share the guest, steps 1 and 2 are one `$S job`, and steps 3 and 4 are the next, which starts with `$S app` and replays the clicks that led there.
+Run this loop inside a lease (see *Share the guest*): start every call with `VMX_LEASE=<token>`, and end the lease when the loop is done. Once you know the clicks, put them in one `$S job` instead.
 
 To film something, skip this loop and use one `film` call (see *Film an animation*).
 
 List rows and other long names: a row's name is its whole title plus summary, so exact-name `click` fails. Find the row with `ui` and click its point:
 
 ```sh
-$S ui "<app>" "part of the title"                      # prints: role  name  x,y  size (a row repeats as cell and group, same point)
-$S clickxy 319 220                                          # use the x,y from that line, then run shot and look
+VMX_LEASE=<token> $S ui "<app>" "part of the title"                      # prints: role  name  x,y  size (a row repeats as cell and group, same point)
+VMX_LEASE=<token> $S clickxy 319 220                        # inside a lease: use the x,y from that line, then run shot and look
 ```
 
 Rules:

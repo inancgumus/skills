@@ -4,7 +4,8 @@
 #   vmx [-n VM] sh '<shell line>'                   run a shell line (/bin/sh -c)
 #   vmx [-n VM] pull <guest-file> <host-file>       copy a guest file out (checksum-verified; over ssh if available, else slow chunks ~1 MB/min)
 #   vmx [-n VM] push <host-file> <guest-file>       copy a host file in (needs ssh to the guest)
-#   vmx [-n VM] job '<lines using $S>'            several vmx calls as one, holding the guest for all of them
+#   vmx [-n VM] job '<lines using $S>'            several vmx calls as one, holding the guest for all of them (only $S commands)
+#   vmx [-n VM] lease [end]                         keep the guest across calls (VMX_LEASE=<token> before each call); 45 s idle, 120 s at most
 #   vmx [-n VM] apps                                names of running GUI apps (use these names with --app)
 #   vmx [-n VM] ui <app> [text]                     on-screen interactive elements: role, name, click point, size (only names containing text)
 #   vmx [-n VM] click <app> <name> [role]           click the one on-screen element with that exact name
@@ -81,19 +82,29 @@ SHOWEL='/usr/bin/jq -r ".[] | \"\\(.role)\\t\\(if .name == \"\" then \"-\" else 
 # The guest lock. Every vmx call holds the guest alone while it runs, so two agents never drive it at once. It is a
 # kernel file lock (flock) on fd 9: it ends when this call ends, even on a crash, so it can never go stale. Calls made
 # inside a call (and inside `vmx job`) share it through VMX_HELD.
-held_here=""
+# Commands that change the screen must not depend on what an earlier call left there, because another agent may
+# have used the guest in between. They run only inside a job (which starts from `app`) or a lease.
+case "$1" in click|clickxy|film)
+  if [ -z "$VMX_SCOPE" ] && [ -z "$VMX_LEASE" ]; then
+    echo "vmx: $1 changes the screen, so it runs only inside one call that sets up the screen first:" >&2
+    echo "  \$S job '\$S app <your.app> -- <args> && \$S $1 ...'" >&2
+    echo "Between separate calls, another agent may quit your app or change the screen. To look before you decide, take a lease (\$S lease) instead." >&2
+    exit 2
+  fi;;
+esac
+# The guest lock (see hold.pl): callers go in the order they came, one at a time, and a lease keeps the guest for one
+# agent across calls. The lock is a kernel file lock on fd 9, so it ends with the call, even on a crash.
+VD="/tmp/vmx-$vm"
+held_here=""; inlease=""
 if [ -z "$VMX_HELD" ] && [ -n "$1" ]; then
-  L="/tmp/vmx-lock-$vm"
-  exec 9>>"$L"
-  t0=$(date +%s)
-  if ! /usr/bin/perl -MFcntl=:flock -e 'open(F, ">>&=9") or exit 2; flock(F, LOCK_EX | LOCK_NB) or exit 1'; then
-    echo "vmx: waiting for the guest. Another agent is using it: $(cat "$L.who" 2>/dev/null)" >&2
-    /usr/bin/perl -MFcntl=:flock -e 'alarm 90; open(F, ">>&=9") or exit 2; flock(F, LOCK_EX) or exit 1' \
-      || { echo "vmx: the guest is still busy after 90 s ($(cat "$L.who" 2>/dev/null)). Run the same call again as a background shell call (Claude Code: run_in_background) and keep working until it ends." >&2; exit 75; }
-    echo "vmx: got the guest after $(( $(date +%s) - t0 )) s." >&2
-  fi
-  printf '%s, pid %s, in %s, since %s\n' "$1" $$ "$PWD" "$(date +%T)" > "$L.who"
+  mkdir -p "$VD"; exec 9>>"$VD/lock"
+  tok="$VMX_LEASE"; [ "$1" = lease ] && [ "$2" != end ] && tok=""
+  r=$(/usr/bin/perl "$here/hold.pl" "$VD" "$1" "$tok") || exit $?
+  [ "$r" = lease ] && inlease=1
+  printf '%s (%s, pid %s, since %s)\n' "$( [ -n "$inlease" ] || [ "$1" = lease ] && echo "an agent with a lease" || echo "a $1 call")" "$PWD" $$ "$(date +%T)" > "$VD/who"
   export VMX_HELD=1; held_here=1
+  # The lease's 45 s idle time counts from the end of each call made with it.
+  [ -n "$inlease" ] && { export VMX_SCOPE=lease; trap '[ -f "$VD/lease" ] && read t s l < "$VD/lease" && printf "%s %s %s\n" "$t" "$s" "$(date +%s)" > "$VD/lease"' EXIT; }
 fi
 # QUIT (guest script, args EXE BUNDLE-ID): quit the app the way a person does (Cmd-Q), so it saves and ends cleanly; force it only after
 # 5 s. Then delete its saved window state, so macOS never asks to reopen windows after an earlier crash.
@@ -113,11 +124,25 @@ case "$1" in
 job)
   # vmx job '<host shell lines that use $S>': run several vmx calls as one, with the guest held for all of them.
   [ -n "$2" ] || { echo "usage: vmx job '<host shell lines that use \$S>'" >&2; exit 2; }
+  # Only $S calls may run while the guest is held: build, sleep, and wait before the job, never inside it.
+  bad=$(/usr/bin/perl "$here/jobcheck.pl" "$2") || { echo "vmx: a job may only run \$S commands (| grep and | head may filter them). Not allowed: $bad. Build, copy files, and wait on the host before the job." >&2; exit 2; }
   t1=$(date +%s)
-  S="$here/vmx" VM="$vm" /usr/bin/perl -e 'alarm shift; exec @ARGV' 540 /bin/sh -c "$2"; rc=$?
+  S="$here/vmx" VM="$vm" VMX_SCOPE=job /usr/bin/perl -e 'alarm shift; exec @ARGV' 540 /bin/sh -c "$2"; rc=$?
   [ $rc = 142 ] && echo "vmx: the job ran past 540 s and was stopped." >&2
   echo "vmx: job exit $rc after $(( $(date +%s) - t1 )) s. The guest is free for other agents now: they may quit or replace your app. Start your next job with \$S app." >&2
   exit $rc;;
+lease)
+  # vmx lease: keep the guest for yourself across calls, to look before you decide. VMX_LEASE=<token> vmx lease end: give it back.
+  if [ "$2" = end ]; then
+    [ -n "$inlease" ] && rm -f "$VD/lease" && trap - EXIT && { echo "vmx: lease ended. The guest is free for other agents."; exit 0; }
+    echo "vmx: no lease of yours is active." >&2; exit 1
+  fi
+  t=$(od -An -N6 -tx1 /dev/urandom | tr -d ' \n'); now=$(date +%s)
+  printf '%s %s %s\n' "$t" "$now" "$now" > "$VD/lease"
+  echo "VMX_LEASE=$t"
+  echo "vmx: you hold the guest. Start every call with VMX_LEASE=$t, like: VMX_LEASE=$t \$S click \"<app>\" \"<name>\"" >&2
+  echo "The lease ends 45 s after your last call ends, and 120 s after now at most. Other agents wait meanwhile, so end it as soon as you are done: VMX_LEASE=$t \$S lease end" >&2
+  exit 0;;
 apps)
   res=$(raw /bin/sh -c '$HOME/.local/bin/agent-desktop list-apps | /usr/bin/jq -r ".data.apps[] | select(.presentation == \"foreground\") | .name"') || exit $?; show "$res"; exit $?;;
 ui)
@@ -192,7 +217,7 @@ printf "%s\n" "$W"' _ "$P" "$@") || exit $?
   out=$(show "$res") || { printf '%s\n' "$out" >&2; exit 1; }
   name=$(printf '%s' "$out" | cut -f1); size=$(printf '%s' "$out" | cut -f2)
   echo "running \"$name\" ($size window) from $P. Use \"$name\" as <app> in ui, click, and film. Log: $P.log"
-  [ -n "$held_here" ] && echo "vmx: the guest is shared. Another agent may quit or replace this app before your next call. To keep it, launch it and use it in one call: \$S job '\$S app ... && \$S film ...'" >&2
+  [ -n "$held_here" ] && [ -z "$inlease" ] && echo "vmx: the guest is shared. Another agent may quit or replace this app before your next call, and click and film refuse to run alone. Launch it and use it in one call: \$S job '\$S app ... && \$S film ...', or take a lease (\$S lease) to look before you decide." >&2
   exit 0;;
 film)
   shift; LIST="$LIST" exec /bin/sh "$(dirname "$0")/film.sh" "$vm" "$@";;
