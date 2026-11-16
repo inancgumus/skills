@@ -3,7 +3,7 @@
 # Each point's color (#rrggbb) in the film's frames, as a table by film time in ms. Points are screen points (a `shot`
 # pixel). Prints a row only when a color changed, plus the first and last frame, unless --all. Runs on the host only.
 use strict; use warnings; use File::Basename qw(dirname);
-{ my $lib = dirname(__FILE__) . '/filmlib.pl'; require $lib; }
+{ use Cwd (); my $lib = Cwd::abs_path(dirname(__FILE__)) . '/filmlib.pl'; require $lib; }
 my $every = grep { $_ eq '--all' } @ARGV; @ARGV = grep { $_ ne '--all' } @ARGV;
 my ($o, $f, @pts) = opts(@ARGV);
 defined $f && @pts && !grep { !/^\d+,\d+$/ } @pts or die2('usage: vmx pixels <film> X,Y [X,Y...] [--from MS] [--to MS] [--all]   (points in whole screen points)');

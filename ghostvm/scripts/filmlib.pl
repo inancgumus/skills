@@ -38,6 +38,25 @@ sub film {
     return \%film;
 }
 
+# A still picture: pixel size and the screen area it shows. A film's last frame (<film>.png) uses <film>.area. A picture
+# without one counts its own pixels as points: 1 pixel per point (a `shot`), 2 for an @2x name.
+sub picture {
+    my $f = shift;
+    -f $f or die2("vmx: no picture at $f");
+    open(my $p, '-|', 'ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', $f) or die;
+    my ($w, $h) = split /,/, (<$p> // ''); close $p;
+    $w && $h or die2("vmx: $f is not a picture ffprobe can read");
+    chomp $h;
+    my %pic = (file => $f, w => $w, h => $h, scale => ($f =~ /\@2x\.\w+$/ ? 2 : 1));
+    (my $base = $f) =~ s/\.png$//i;
+    for my $area ("$f.area", "$base.area") {
+        open(my $a, '<', $area) or next;
+        my $l = <$a> // ''; close $a;
+        if ($l =~ /^(\d+),(\d+),(\d+),(\d+)/) { @pic{qw(ax ay aw ah)} = ($1, $2, $3, $4); $pic{scale} = $w / $3; last }
+    }
+    return \%pic;
+}
+
 # A screen point (or rect) to film pixels. Without <film>.area the numbers count as points of the film itself.
 sub to_px {
     my ($film, $x, $y) = @_;
