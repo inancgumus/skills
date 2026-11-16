@@ -16,6 +16,9 @@
 #   vmx frames <film> [--from MS] [--to MS] [--rect x,y,w,h] [--cols N] [--zoom N]   one contact sheet of the film's real frames, each labeled with its time (host only)
 #   vmx frames <picture>... [--rect x,y,w,h] [--cols N] [--zoom N]   pictures side by side, cropped alike, each labeled with its name (host only)
 #   vmx pixels <film> X,Y [X,Y...] [--from MS] [--to MS]       each point's color in every frame of the film, as a table (host only)
+#   vmx build <dir> <product> <out.app> --id ID [--name N] [--plist F] [--then LINE] [--release]   debug build + signed .app, under one shared build lock (host only)
+#   vmx build <dir> --scheme SCHEME <out.app> [--release]   the same for an Xcode project
+#   vmx test <dir> (--filter NAME | --all) [--scheme SCHEME]   the tests for the code you changed, or the whole suite once at the end (host only)
 #   vmx [-n VM] shot <host-file.png>                screenshot: <file> at the screen's size in points, plus <file>@2x.png at full pixels
 # VM name: -n, else $VM, else the only VM `vmctl list` shows (name = bundle basename without .GhostVM).
 # With ssh to the guest, commands go through vmxd (see vmxd.pl): no GhostTools 30 s hangs, nothing runs twice. Without ssh, vmx retries
@@ -24,6 +27,8 @@ vm="${VM:-}"
 [ "$1" = "-n" ] && { vm="$2"; shift 2; }
 # frames and pixels read a film on the host, so they never wait for the guest.
 case "$1" in frames|pixels) c=$1; shift; exec /usr/bin/perl "$(cd "$(dirname "$0")" && pwd)/$c.pl" "$@";; esac
+# build and test run on the host only (see build.sh).
+case "$1" in build|test) exec /bin/sh "$(cd "$(dirname "$0")" && pwd)/build.sh" "$@";; esac
 if [ -z "$vm" ]; then
   vm=$(vmctl list | awk '{print $1}' | sed 's#.*/##; s#\.GhostVM$##')
   [ "$(printf '%s\n' "$vm" | wc -l)" -eq 1 ] && [ -n "$vm" ] || { echo "vmx: pick a VM with -n or \$VM. Found: $vm" >&2; exit 2; }
